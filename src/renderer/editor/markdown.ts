@@ -543,3 +543,10 @@ export function serializeMarkdown(document: JSONContent): string {
   const serialized = String(compiler.stringify(tree as MarkdownNode)).trimEnd();
   return serialized.length === 0 ? '' : `${serialized}\n`;
 }
+
+export function serializeMarkdownFragment(content: JSONContent[] = []): string {
+  return serializeMarkdown({
+    type: 'doc',
+    content,
+  });
+}

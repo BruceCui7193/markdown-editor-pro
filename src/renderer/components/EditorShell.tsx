@@ -17,7 +17,7 @@ import Toolbar from './Toolbar';
 import StatusBar from './StatusBar';
 import Sidebar from './Sidebar';
 import { createEditorExtensions } from '../editor/create-editor-extensions';
-import { parseMarkdown, serializeMarkdown } from '../editor/markdown';
+import { parseMarkdown, serializeMarkdown, serializeMarkdownFragment } from '../editor/markdown';
 import { calculateDocumentStats, fileToBase64 } from '../editor/utils/helpers';
 import { extractOutline, type OutlineItem } from '../utils/document';
 
@@ -322,6 +322,10 @@ export default function EditorShell({
       attributes: {
         class: 'editor-surface',
         spellcheck: 'true',
+      },
+      clipboardTextSerializer: (slice) => {
+        const content = slice.content.toJSON() as Parameters<typeof serializeMarkdownFragment>[0];
+        return serializeMarkdownFragment(content).trimEnd();
       },
       handleClick: (_view, _pos, event) => {
         const target = event.target as HTMLElement;

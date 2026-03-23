@@ -1,5 +1,5 @@
 import { createLowlight } from 'lowlight';
-import { Extension } from '@tiptap/core';
+import type { Extension } from '@tiptap/core';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Link from '@tiptap/extension-link';
 import Table from '@tiptap/extension-table';
