@@ -538,12 +538,29 @@ function escapeHtml(value: string): string {
 }
 
 async function readKatexExportCss(): Promise<string> {
+  const candidateDirectories = [
+    path.join(app.getAppPath(), 'node_modules', 'katex', 'dist'),
+    path.join(process.cwd(), 'node_modules', 'katex', 'dist'),
+    path.join(path.dirname(app.getPath('exe')), 'resources', 'app.asar', 'node_modules', 'katex', 'dist'),
+    path.join(path.dirname(app.getPath('exe')), 'resources', 'app', 'node_modules', 'katex', 'dist'),
+  ];
+
   try {
-    const katexDirectory = path.join(process.cwd(), 'node_modules', 'katex', 'dist');
+    const katexDirectory = candidateDirectories.find((directory) =>
+      existsSync(path.join(directory, 'katex.min.css')),
+    );
+
+    if (!katexDirectory) {
+      return '';
+    }
+
     const katexPath = path.join(katexDirectory, 'katex.min.css');
     const css = await fs.readFile(katexPath, 'utf8');
-    const fontsBaseUrl = pathToFileURL(path.join(katexDirectory, 'fonts') + path.sep).toString();
-    return css.replace(/url\((?:\.\.\/)?fonts\//g, `url(${fontsBaseUrl}`);
+    const fontsBaseUrl = `${pathToFileURL(path.join(katexDirectory, 'fonts')).toString()}/`;
+
+    return css
+      .replace(/url\((['"]?)(?:\.\.\/)?fonts\//g, `url($1${fontsBaseUrl}`)
+      .replace(/src:\s*local\('Arial'\);/g, '');
   } catch {
     return '';
   }
