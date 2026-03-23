@@ -41,7 +41,20 @@ export const MathBlock = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(MathBlockView);
+    return ReactNodeViewRenderer(MathBlockView, {
+      update: ({ oldNode, newNode, updateProps }) => {
+        if (oldNode.type !== newNode.type) {
+          return false;
+        }
+
+        if (oldNode.attrs.value === newNode.attrs.value) {
+          return true;
+        }
+
+        updateProps();
+        return true;
+      },
+    });
   },
 
   addCommands() {

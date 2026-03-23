@@ -123,19 +123,6 @@ function areOutlinesEqual(left: OutlineItem[], right: OutlineItem[]): boolean {
 type IdleHandle = number;
 
 function scheduleIdleWork(task: () => void, timeout = 1000): IdleHandle {
-  const requestIdle = (window as Window & {
-    requestIdleCallback?: (
-      callback: (deadline: IdleDeadline) => void,
-      options?: { timeout: number },
-    ) => number;
-  }).requestIdleCallback;
-
-  if (requestIdle) {
-    return requestIdle(() => {
-      task();
-    }, { timeout });
-  }
-
   return window.setTimeout(task, timeout);
 }
 
@@ -144,20 +131,11 @@ function cancelIdleWork(handle: IdleHandle | null): void {
     return;
   }
 
-  const cancelIdle = (window as Window & {
-    cancelIdleCallback?: (id: number) => void;
-  }).cancelIdleCallback;
-
-  if (cancelIdle) {
-    cancelIdle(handle);
-    return;
-  }
-
   window.clearTimeout(handle);
 }
 
-const VISUAL_META_SYNC_DELAY_MS = 70;
-const VISUAL_DOCUMENT_SYNC_TIMEOUT_MS = 900;
+const VISUAL_META_SYNC_DELAY_MS = 260;
+const VISUAL_DOCUMENT_SYNC_TIMEOUT_MS = 1400;
 
 interface EditorViewportProps {
   editor: TiptapEditor | null;
@@ -220,11 +198,15 @@ export default function EditorShell({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sourceTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editorHostRef = useRef<HTMLDivElement | null>(null);
+  const initialContentRef = useRef(parseMarkdown(document.markdown));
   const documentPathRef = useRef(document.path);
   const documentMarkdownRef = useRef(document.markdown);
+  const visualMarkdownRef = useRef(document.markdown);
+  const visualStatsRef = useRef(document.stats);
   const externalUpdateRef = useRef(false);
   const lastEmittedMarkdownRef = useRef(document.markdown);
   const windowDirtyRef = useRef(document.dirty);
+  const skipNextDocChangeRef = useRef(true);
   const pendingVisualMetaSyncRef = useRef<number | null>(null);
   const pendingVisualDocumentSyncRef = useRef<IdleHandle | null>(null);
   const [toolbarVisible, setToolbarVisible] = useState(() => {
@@ -251,6 +233,11 @@ export default function EditorShell({
   useEffect(() => {
     documentMarkdownRef.current = document.markdown;
   }, [document.markdown]);
+
+  useEffect(() => {
+    visualMarkdownRef.current = document.markdown;
+    visualStatsRef.current = document.stats;
+  }, [document.markdown, document.stats]);
 
   useEffect(() => {
     windowDirtyRef.current = document.dirty;
@@ -314,45 +301,84 @@ export default function EditorShell({
     [],
   );
 
-  const editor = useEditor({
-    extensions,
-    autofocus: 'end',
-    content: parseMarkdown(document.markdown),
-    editorProps: {
+  const handleClipboardTextSerialize = useCallback(
+    (slice: { content: { toJSON: () => unknown } }) => {
+      const content = slice.content.toJSON() as Parameters<typeof serializeMarkdownFragment>[0];
+      return serializeMarkdownFragment(content).trimEnd();
+    },
+    [],
+  );
+
+  const handleEditorClick = useCallback((_view: unknown, _pos: unknown, event: Event) => {
+    const target = event.target as HTMLElement;
+    const link = target?.closest('a[href]') as HTMLAnchorElement | null;
+
+    if (link && ('metaKey' in event || 'ctrlKey' in event)) {
+      const keyboardLikeEvent = event as Event & { metaKey?: boolean; ctrlKey?: boolean };
+      if (!(keyboardLikeEvent.metaKey || keyboardLikeEvent.ctrlKey)) {
+        return false;
+      }
+
+      void window.markdownEditor.openExternal(link.href);
+      return true;
+    }
+
+    return false;
+  }, []);
+
+  const editorProps = useMemo(
+    () => ({
       attributes: {
         class: 'editor-surface',
         spellcheck: 'true',
       },
-      clipboardTextSerializer: (slice) => {
-        const content = slice.content.toJSON() as Parameters<typeof serializeMarkdownFragment>[0];
-        return serializeMarkdownFragment(content).trimEnd();
-      },
-      handleClick: (_view, _pos, event) => {
-        const target = event.target as HTMLElement;
-        const link = target.closest('a[href]') as HTMLAnchorElement | null;
+      clipboardTextSerializer: handleClipboardTextSerialize,
+      handleClick: handleEditorClick,
+    }),
+    [handleClipboardTextSerialize, handleEditorClick],
+  );
 
-        if (link && (event.metaKey || event.ctrlKey)) {
-          void window.markdownEditor.openExternal(link.href);
-          return true;
-        }
-
-        return false;
-      },
-    },
+  const editor = useEditor({
+    extensions,
+    autofocus: 'end',
+    content: initialContentRef.current,
+    shouldRerenderOnTransaction: false,
+    editorProps,
     onCreate: ({ editor: nextEditor }) => {
+      const canonicalMarkdown = serializeMarkdown(nextEditor.getJSON());
       const stats = calculateDocumentStats(getEditorPlainText(nextEditor));
       setLiveStats(stats);
       setLiveDirty(false);
       setOutline(extractOutlineFromEditor(nextEditor));
-      lastEmittedMarkdownRef.current = document.markdown;
+      visualMarkdownRef.current = canonicalMarkdown;
+      visualStatsRef.current = stats;
+      lastEmittedMarkdownRef.current = canonicalMarkdown;
+      skipNextDocChangeRef.current = true;
     },
-    onUpdate: ({ editor: nextEditor }) => {
+    onUpdate: ({ editor: nextEditor, transaction }) => {
       if (externalUpdateRef.current || sourceModeRef.current) {
+        return;
+      }
+
+      if (!transaction.docChanged) {
+        return;
+      }
+
+      if (skipNextDocChangeRef.current) {
+        skipNextDocChangeRef.current = false;
+        const canonicalMarkdown = serializeMarkdown(nextEditor.getJSON());
+        const stats = calculateDocumentStats(getEditorPlainText(nextEditor));
+        visualMarkdownRef.current = canonicalMarkdown;
+        visualStatsRef.current = stats;
+        lastEmittedMarkdownRef.current = canonicalMarkdown;
+        setLiveDirty(false);
         return;
       }
 
       if (!windowDirtyRef.current) {
         windowDirtyRef.current = true;
+        setLiveDirty(true);
+        onDocumentMetaChange(true);
         void window.markdownEditor.setWindowDirty(true);
       }
 
@@ -363,9 +389,12 @@ export default function EditorShell({
       pendingVisualMetaSyncRef.current = window.setTimeout(() => {
         const stats = calculateDocumentStats(getEditorPlainText(nextEditor));
         setLiveStats((current) => (areStatsEqual(current, stats) ? current : stats));
-        setLiveDirty(true);
-        const nextOutline = extractOutlineFromEditor(nextEditor);
-        setOutline((current) => (areOutlinesEqual(current, nextOutline) ? current : nextOutline));
+
+        if (sidebarVisible && sidebarTab === 'outline') {
+          const nextOutline = extractOutlineFromEditor(nextEditor);
+          setOutline((current) => (areOutlinesEqual(current, nextOutline) ? current : nextOutline));
+        }
+
         pendingVisualMetaSyncRef.current = null;
       }, VISUAL_META_SYNC_DELAY_MS);
 
@@ -376,12 +405,13 @@ export default function EditorShell({
       pendingVisualDocumentSyncRef.current = scheduleIdleWork(() => {
         const markdown = serializeMarkdown(nextEditor.getJSON());
         const stats = calculateDocumentStats(getEditorPlainText(nextEditor));
+        visualMarkdownRef.current = markdown;
+        visualStatsRef.current = stats;
         lastEmittedMarkdownRef.current = markdown;
-        onDocumentChange(markdown, stats);
         pendingVisualDocumentSyncRef.current = null;
       }, VISUAL_DOCUMENT_SYNC_TIMEOUT_MS);
     },
-  });
+  }, []);
 
   function flushVisualSync(targetEditor = editor): { markdown: string; stats: DocumentStats } | null {
     if (!targetEditor) {
@@ -400,6 +430,8 @@ export default function EditorShell({
 
     const markdown = serializeMarkdown(targetEditor.getJSON());
     const stats = calculateDocumentStats(getEditorPlainText(targetEditor));
+    visualMarkdownRef.current = markdown;
+    visualStatsRef.current = stats;
     lastEmittedMarkdownRef.current = markdown;
     setLiveStats((current) => (areStatsEqual(current, stats) ? current : stats));
     setLiveDirty(markdown !== document.savedMarkdown);
@@ -431,6 +463,7 @@ export default function EditorShell({
     }
 
     externalUpdateRef.current = true;
+    skipNextDocChangeRef.current = true;
     editor.commands.setContent(parseMarkdown(document.markdown), false);
     externalUpdateRef.current = false;
     lastEmittedMarkdownRef.current = document.markdown;
@@ -524,7 +557,27 @@ export default function EditorShell({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const menuEvent = event as CustomEvent<'toggle-source-mode' | 'toggle-toolbar' | 'toggle-sidebar'>;
+      const menuEvent = event as CustomEvent<
+        'save-document' | 'save-document-as' | 'toggle-source-mode' | 'toggle-toolbar' | 'toggle-sidebar'
+      >;
+      if (menuEvent.detail === 'save-document') {
+        const visualState = sourceModeRef.current ? null : flushVisualSync();
+        void onSaveDocument(
+          sourceModeRef.current ? sourceDraftRef.current : visualState?.markdown,
+          sourceModeRef.current ? computeSourceStats(sourceDraftRef.current) : visualState?.stats,
+        );
+        return;
+      }
+
+      if (menuEvent.detail === 'save-document-as') {
+        const visualState = sourceModeRef.current ? null : flushVisualSync();
+        void onSaveDocumentAs(
+          sourceModeRef.current ? sourceDraftRef.current : visualState?.markdown,
+          sourceModeRef.current ? computeSourceStats(sourceDraftRef.current) : visualState?.stats,
+        );
+        return;
+      }
+
       if (menuEvent.detail === 'toggle-source-mode') {
         setSourceMode((current) => {
           if (!current) {
@@ -591,39 +644,73 @@ export default function EditorShell({
     [document.savedMarkdown, onDocumentChange, onDocumentMetaChange],
   );
 
+  const handleToolbarSave = useCallback(() => {
+    const visualState = sourceModeRef.current ? null : flushVisualSync();
+    void onSaveDocument(
+      sourceModeRef.current ? sourceDraftRef.current : visualState?.markdown,
+      sourceModeRef.current ? computeSourceStats(sourceDraftRef.current) : visualState?.stats,
+    );
+  }, [document.savedMarkdown, onSaveDocument, editor]);
+
+  const handleToolbarSaveAs = useCallback(() => {
+    const visualState = sourceModeRef.current ? null : flushVisualSync();
+    void onSaveDocumentAs(
+      sourceModeRef.current ? sourceDraftRef.current : visualState?.markdown,
+      sourceModeRef.current ? computeSourceStats(sourceDraftRef.current) : visualState?.stats,
+    );
+  }, [document.savedMarkdown, onSaveDocumentAs, editor]);
+
+  const handleInsertImage = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarVisible((current) => !current);
+  }, []);
+
+  const handleToggleToolbar = useCallback(() => {
+    setToolbarVisible((current) => !current);
+  }, []);
+
+  const handleToggleSourceMode = useCallback(() => {
+    setSourceMode((current) => {
+      if (!current) {
+        const visualState = flushVisualSync();
+        setSourceDraft(visualState?.markdown ?? documentMarkdownRef.current);
+      }
+      return !current;
+    });
+  }, [editor]);
+
+  const handleNavigateOutline = useCallback(
+    (index: number) => {
+      setSidebarTab('outline');
+
+      if (sourceModeRef.current) {
+        return;
+      }
+
+      const target = editorHostRef.current?.querySelector(
+        `[data-outline-index="${index}"]`,
+      ) as HTMLElement | null;
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    },
+    [],
+  );
+
   return (
     <div className="app-shell" data-theme={resolvedTheme} data-color-scheme={themePalette}>
       <Toolbar
         editor={editor}
-        onInsertImage={() => fileInputRef.current?.click()}
+        onInsertImage={handleInsertImage}
         onNewWindow={onCreateDocument}
         onOpen={onOpenDocument}
         onOpenFolder={onOpenFolder}
-        onSave={() => {
-          const visualState = sourceMode ? null : flushVisualSync();
-          onSaveDocument(
-            sourceMode ? sourceDraft : visualState?.markdown,
-            sourceMode ? computeSourceStats(sourceDraft) : visualState?.stats,
-          );
-        }}
-        onSaveAs={() => {
-          const visualState = sourceMode ? null : flushVisualSync();
-          onSaveDocumentAs(
-            sourceMode ? sourceDraft : visualState?.markdown,
-            sourceMode ? computeSourceStats(sourceDraft) : visualState?.stats,
-          );
-        }}
-        onToggleSidebar={() => setSidebarVisible((current) => !current)}
-        onToggleSourceMode={() =>
-          setSourceMode((current) => {
-            if (!current) {
-              const visualState = flushVisualSync();
-              setSourceDraft(visualState?.markdown ?? documentMarkdownRef.current);
-            }
-            return !current;
-          })
-        }
-        onToggleToolbar={() => setToolbarVisible((current) => !current)}
+        onSave={handleToolbarSave}
+        onSaveAs={handleToolbarSaveAs}
+        onToggleSidebar={handleToggleSidebar}
+        onToggleSourceMode={handleToggleSourceMode}
+        onToggleToolbar={handleToggleToolbar}
         sidebarVisible={sidebarVisible}
         sourceMode={sourceMode}
         theme={theme}
@@ -638,18 +725,7 @@ export default function EditorShell({
           currentFilePath={document.path}
           folderEntries={folder?.entries ?? []}
           folderPath={folder?.path ?? null}
-          onNavigateOutline={(index) => {
-            setSidebarTab('outline');
-
-            if (sourceMode) {
-              return;
-            }
-
-            const target = editorHostRef.current?.querySelector(
-              `[data-outline-index="${index}"]`,
-            ) as HTMLElement | null;
-            target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }}
+          onNavigateOutline={handleNavigateOutline}
           onOpenFile={(filePath) => onOpenDocumentPath(filePath)}
           onOpenFolder={onOpenFolder}
           onSelectTab={setSidebarTab}

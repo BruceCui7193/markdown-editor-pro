@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { NodeViewWrapper } from '@tiptap/react';
 import type { NodeViewProps } from '@tiptap/react';
 
@@ -9,7 +9,7 @@ function loadKatex() {
   return katexLoader;
 }
 
-export default function MathInlineView({ node, selected, updateAttributes }: NodeViewProps) {
+function MathInlineView({ node, selected, updateAttributes }: NodeViewProps) {
   const [editing, setEditing] = useState(!node.attrs.value);
   const [draft, setDraft] = useState(String(node.attrs.value ?? ''));
   const [katexModule, setKatexModule] = useState<typeof import('katex') | null>(null);
@@ -82,3 +82,10 @@ export default function MathInlineView({ node, selected, updateAttributes }: Nod
     </NodeViewWrapper>
   );
 }
+
+export default memo(MathInlineView, (prevProps, nextProps) => {
+  return (
+    prevProps.selected === nextProps.selected &&
+    prevProps.node.attrs.value === nextProps.node.attrs.value
+  );
+});

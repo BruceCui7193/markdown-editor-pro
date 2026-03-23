@@ -41,7 +41,20 @@ export const MermaidBlock = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(MermaidBlockView);
+    return ReactNodeViewRenderer(MermaidBlockView, {
+      update: ({ oldNode, newNode, updateProps }) => {
+        if (oldNode.type !== newNode.type) {
+          return false;
+        }
+
+        if (oldNode.attrs.code === newNode.attrs.code) {
+          return true;
+        }
+
+        updateProps();
+        return true;
+      },
+    });
   },
 
   addCommands() {

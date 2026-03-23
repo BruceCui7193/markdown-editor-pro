@@ -1,4 +1,4 @@
-import { Suspense, lazy, startTransition, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ExportStatus,
   OpenedFolder,
@@ -134,6 +134,222 @@ export default function App() {
     void window.markdownEditor.setWindowDirty(editorDocument.dirty);
   }, [editorDocument.dirty]);
 
+  const refreshFolderForDocument = useCallback(async (filePath: string | null): Promise<void> => {
+    const folderPath = getDirectoryPath(filePath);
+    if (!folderPath) {
+      setCurrentFolder(null);
+      return;
+    }
+
+    try {
+      const folder = await window.markdownEditor.readFolder(folderPath);
+      setCurrentFolder(folder);
+    } catch {
+      setCurrentFolder(null);
+      setMessage('\u8bfb\u53d6\u6587\u4ef6\u5939\u5931\u8d25');
+    }
+  }, []);
+
+  const applyOpenedDocument = useCallback((openedDocument: OpenedDocument): void => {
+    startTransition(() => {
+      setEditorDocument((current) => ({
+        ...current,
+        path: openedDocument.path,
+        title: openedDocument.title,
+        markdown: openedDocument.markdown,
+        savedMarkdown: openedDocument.markdown,
+        dirty: false,
+        lastSavedAt: Date.now(),
+      }));
+      setMessage(`\u5df2\u6253\u5f00 ${openedDocument.title}`);
+    });
+    void refreshFolderForDocument(openedDocument.path);
+  }, [refreshFolderForDocument]);
+
+  const applySavedDocument = useCallback((savedDocument: SavedDocument): void => {
+    startTransition(() => {
+      setEditorDocument((current) => ({
+        ...current,
+        path: savedDocument.path,
+        title: savedDocument.title,
+        markdown: savedDocument.markdown,
+        savedMarkdown: savedDocument.markdown,
+        dirty: false,
+        lastSavedAt: Date.now(),
+      }));
+      setMessage(`\u5df2\u4fdd\u5b58\u5230 ${savedDocument.title}`);
+    });
+    void refreshFolderForDocument(savedDocument.path);
+  }, [refreshFolderForDocument]);
+
+  const confirmDiscardChanges = useCallback((): boolean => {
+    if (!documentRef.current.dirty) {
+      return true;
+    }
+
+    return window.confirm('\u5f53\u524d\u6587\u6863\u6709\u672a\u4fdd\u5b58\u7684\u4fee\u6539\uff0c\u786e\u5b9a\u4e22\u5f03\u5e76\u7ee7\u7eed\u5417\uff1f');
+  }, []);
+
+  const openDocument = useCallback(async (): Promise<void> => {
+    const opened = await window.markdownEditor.openDocumentDialogInNewWindow();
+    if (opened) {
+      setMessage('\u5df2\u5728\u65b0\u7a97\u53e3\u6253\u5f00\u6587\u4ef6');
+    }
+  }, []);
+
+  const openDocumentPath = useCallback(async (filePath: string): Promise<void> => {
+    if (!confirmDiscardChanges()) {
+      return;
+    }
+
+    const document = await window.markdownEditor.openDocumentPath(filePath);
+    applyOpenedDocument(document);
+  }, [applyOpenedDocument, confirmDiscardChanges]);
+
+  const openFolder = useCallback(async (): Promise<void> => {
+    try {
+      const opened = await window.markdownEditor.openFolderDialogInNewWindow();
+      if (opened) {
+        setMessage('\u5df2\u5728\u65b0\u7a97\u53e3\u6253\u5f00\u6587\u4ef6\u5939');
+      }
+    } catch {
+      setMessage('\u6253\u5f00\u6587\u4ef6\u5939\u5931\u8d25');
+    }
+  }, []);
+
+  const saveDocument = useCallback(async (
+    saveAs = false,
+    overrideMarkdown?: string,
+    overrideStats?: DocumentStats,
+  ): Promise<boolean> => {
+    const currentDocument = documentRef.current;
+    const markdown = overrideMarkdown ?? currentDocument.markdown;
+
+    if (overrideMarkdown !== undefined && overrideStats) {
+      setEditorDocument((current) => ({
+        ...current,
+        markdown: overrideMarkdown,
+        dirty: overrideMarkdown !== current.savedMarkdown,
+        stats: overrideStats,
+      }));
+    }
+
+    const payload = {
+      markdown,
+      currentPath: currentDocument.path,
+    };
+
+    const result = saveAs
+      ? await window.markdownEditor.saveDocumentAs(payload)
+      : await window.markdownEditor.saveDocument(payload);
+
+    if (!result) {
+      setMessage('\u5df2\u53d6\u6d88\u4fdd\u5b58');
+      return false;
+    }
+
+    applySavedDocument(result);
+    return true;
+  }, [applySavedDocument]);
+
+  const createNewDocument = useCallback(async (): Promise<void> => {
+    await window.markdownEditor.newWindow();
+    setMessage('\u5df2\u6253\u5f00\u65b0\u7a97\u53e3');
+  }, []);
+
+  const handleMenuAction = useCallback(async (action: MenuAction): Promise<void> => {
+    if (action === 'new-document') {
+      await createNewDocument();
+      return;
+    }
+
+    if (action === 'open-document') {
+      await openDocument();
+      return;
+    }
+
+    if (action === 'open-folder') {
+      await openFolder();
+      return;
+    }
+
+    if (action === 'save-document') {
+      window.dispatchEvent(
+        new CustomEvent<MenuAction>('markdown-editor:menu-action', {
+          detail: action,
+        }),
+      );
+      return;
+    }
+
+    if (action === 'save-document-as') {
+      window.dispatchEvent(
+        new CustomEvent<MenuAction>('markdown-editor:menu-action', {
+          detail: action,
+        }),
+      );
+      return;
+    }
+
+    if (
+      action === 'toggle-source-mode' ||
+      action === 'toggle-toolbar' ||
+      action === 'toggle-sidebar'
+    ) {
+      window.dispatchEvent(
+        new CustomEvent<MenuAction>('markdown-editor:menu-action', {
+          detail: action,
+        }),
+      );
+      return;
+    }
+
+    setTheme((current) => cycleTheme(current));
+  }, [createNewDocument, openDocument, openFolder, saveDocument]);
+
+  const handleDocumentChange = useCallback((markdown: string, stats: DocumentStats) => {
+    setEditorDocument((current) => {
+      const nextDirty = markdown !== current.savedMarkdown;
+      if (
+        current.markdown === markdown &&
+        current.dirty === nextDirty &&
+        areStatsEqual(current.stats, stats)
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        markdown,
+        dirty: nextDirty,
+        stats,
+      };
+    });
+  }, []);
+
+  const handleDocumentMetaChange = useCallback((dirty: boolean) => {
+    setEditorDocument((current) => {
+      if (current.dirty === dirty) {
+        return current;
+      }
+
+      return {
+        ...current,
+        dirty,
+      };
+    });
+  }, []);
+
+  const handleSaveDocument = useCallback(
+    (markdown?: string, stats?: DocumentStats) => saveDocument(false, markdown, stats),
+    [saveDocument],
+  );
+
+  const handleSaveDocumentAs = useCallback(
+    (markdown?: string, stats?: DocumentStats) => saveDocument(true, markdown, stats),
+    [saveDocument],
+  );
+
   useEffect(() => {
     const offDocumentOpened = window.markdownEditor.onDocumentOpened((openedDocument) => {
       if (!confirmDiscardChanges()) {
@@ -159,171 +375,7 @@ export default function App() {
       offExportStatus();
       offMenuAction();
     };
-  }, []);
-
-  function applyOpenedDocument(openedDocument: OpenedDocument): void {
-    startTransition(() => {
-      setEditorDocument((current) => ({
-        ...current,
-        path: openedDocument.path,
-        title: openedDocument.title,
-        markdown: openedDocument.markdown,
-        savedMarkdown: openedDocument.markdown,
-        dirty: false,
-        lastSavedAt: Date.now(),
-      }));
-      setMessage(`\u5df2\u6253\u5f00 ${openedDocument.title}`);
-    });
-    void refreshFolderForDocument(openedDocument.path);
-  }
-
-  function applySavedDocument(savedDocument: SavedDocument): void {
-    startTransition(() => {
-      setEditorDocument((current) => ({
-        ...current,
-        path: savedDocument.path,
-        title: savedDocument.title,
-        markdown: savedDocument.markdown,
-        savedMarkdown: savedDocument.markdown,
-        dirty: false,
-        lastSavedAt: Date.now(),
-      }));
-      setMessage(`\u5df2\u4fdd\u5b58\u5230 ${savedDocument.title}`);
-    });
-    void refreshFolderForDocument(savedDocument.path);
-  }
-
-  async function refreshFolderForDocument(filePath: string | null): Promise<void> {
-    const folderPath = getDirectoryPath(filePath);
-    if (!folderPath) {
-      setCurrentFolder(null);
-      return;
-    }
-
-    try {
-      const folder = await window.markdownEditor.readFolder(folderPath);
-      setCurrentFolder(folder);
-    } catch {
-      setCurrentFolder(null);
-      setMessage('\u8bfb\u53d6\u6587\u4ef6\u5939\u5931\u8d25');
-    }
-  }
-
-  async function openDocument(): Promise<void> {
-    const opened = await window.markdownEditor.openDocumentDialogInNewWindow();
-    if (opened) {
-      setMessage('\u5df2\u5728\u65b0\u7a97\u53e3\u6253\u5f00\u6587\u4ef6');
-    }
-  }
-
-  async function openDocumentPath(filePath: string): Promise<void> {
-    if (!confirmDiscardChanges()) {
-      return;
-    }
-
-    const document = await window.markdownEditor.openDocumentPath(filePath);
-    applyOpenedDocument(document);
-  }
-
-  async function openFolder(): Promise<void> {
-    try {
-      const opened = await window.markdownEditor.openFolderDialogInNewWindow();
-      if (opened) {
-        setMessage('\u5df2\u5728\u65b0\u7a97\u53e3\u6253\u5f00\u6587\u4ef6\u5939');
-      }
-    } catch {
-      setMessage('\u6253\u5f00\u6587\u4ef6\u5939\u5931\u8d25');
-    }
-  }
-
-  async function saveDocument(
-    saveAs = false,
-    overrideMarkdown?: string,
-    overrideStats?: DocumentStats,
-  ): Promise<boolean> {
-    const markdown = overrideMarkdown ?? editorDocument.markdown;
-
-    if (overrideMarkdown !== undefined && overrideStats) {
-      setEditorDocument((current) => ({
-        ...current,
-        markdown: overrideMarkdown,
-        dirty: overrideMarkdown !== current.savedMarkdown,
-        stats: overrideStats,
-      }));
-    }
-
-    const payload = {
-      markdown,
-      currentPath: editorDocument.path,
-    };
-
-    const result = saveAs
-      ? await window.markdownEditor.saveDocumentAs(payload)
-      : await window.markdownEditor.saveDocument(payload);
-
-    if (!result) {
-      setMessage('\u5df2\u53d6\u6d88\u4fdd\u5b58');
-      return false;
-    }
-
-    applySavedDocument(result);
-    return true;
-  }
-
-  async function createNewDocument(): Promise<void> {
-    await window.markdownEditor.newWindow();
-    setMessage('\u5df2\u6253\u5f00\u65b0\u7a97\u53e3');
-  }
-
-  function confirmDiscardChanges(): boolean {
-    if (!documentRef.current.dirty) {
-      return true;
-    }
-
-    return window.confirm('\u5f53\u524d\u6587\u6863\u6709\u672a\u4fdd\u5b58\u7684\u4fee\u6539\uff0c\u786e\u5b9a\u4e22\u5f03\u5e76\u7ee7\u7eed\u5417\uff1f');
-  }
-
-  async function handleMenuAction(action: MenuAction): Promise<void> {
-    if (action === 'new-document') {
-      await createNewDocument();
-      return;
-    }
-
-    if (action === 'open-document') {
-      await openDocument();
-      return;
-    }
-
-    if (action === 'open-folder') {
-      await openFolder();
-      return;
-    }
-
-    if (action === 'save-document') {
-      await saveDocument(false);
-      return;
-    }
-
-    if (action === 'save-document-as') {
-      await saveDocument(true);
-      return;
-    }
-
-    if (
-      action === 'toggle-source-mode' ||
-      action === 'toggle-toolbar' ||
-      action === 'toggle-sidebar'
-    ) {
-      window.dispatchEvent(
-        new CustomEvent<MenuAction>('markdown-editor:menu-action', {
-          detail: action,
-        }),
-      );
-      return;
-    }
-
-    setTheme((current) => cycleTheme(current));
-  }
+  }, [applyOpenedDocument, confirmDiscardChanges, handleMenuAction]);
 
   if (!editorShellEnabled) {
     return <div className="app-booting">{'\u6b63\u5728\u52a0\u8f7d\u7f16\u8f91\u5668\u2026'}</div>;
@@ -335,45 +387,14 @@ export default function App() {
         <EditorShell
           document={editorDocument}
           folder={currentFolder}
-          onCreateDocument={() => {
-            void createNewDocument();
-          }}
-          onDocumentChange={(markdown, stats) => {
-            setEditorDocument((current) => {
-              const nextDirty = markdown !== current.savedMarkdown;
-              if (
-                current.markdown === markdown &&
-                current.dirty === nextDirty &&
-                areStatsEqual(current.stats, stats)
-              ) {
-                return current;
-              }
-
-              return {
-                ...current,
-                markdown,
-                dirty: nextDirty,
-                stats,
-              };
-            });
-          }}
-          onDocumentMetaChange={(dirty) => {
-            setEditorDocument((current) => {
-              if (current.dirty === dirty) {
-                return current;
-              }
-
-              return {
-                ...current,
-                dirty,
-              };
-            });
-          }}
+          onCreateDocument={createNewDocument}
+          onDocumentChange={handleDocumentChange}
+          onDocumentMetaChange={handleDocumentMetaChange}
           onOpenDocumentPath={openDocumentPath}
           onOpenFolder={openFolder}
           onOpenDocument={openDocument}
-          onSaveDocument={(markdown, stats) => saveDocument(false, markdown, stats)}
-          onSaveDocumentAs={(markdown, stats) => saveDocument(true, markdown, stats)}
+          onSaveDocument={handleSaveDocument}
+          onSaveDocumentAs={handleSaveDocumentAs}
           resolvedTheme={resolvedTheme}
           theme={theme}
           onSetTheme={setTheme}

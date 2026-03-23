@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { NodeViewWrapper } from '@tiptap/react';
 import type { NodeViewProps } from '@tiptap/react';
 
@@ -14,7 +14,7 @@ function loadMermaid() {
   return mermaidLoader;
 }
 
-export default function MermaidBlockView({ node, selected, updateAttributes }: NodeViewProps) {
+function MermaidBlockView({ node, selected, updateAttributes }: NodeViewProps) {
   const [editing, setEditing] = useState(!node.attrs.code);
   const [draft, setDraft] = useState(String(node.attrs.code ?? ''));
   const [svg, setSvg] = useState('');
@@ -111,3 +111,10 @@ export default function MermaidBlockView({ node, selected, updateAttributes }: N
     </NodeViewWrapper>
   );
 }
+
+export default memo(MermaidBlockView, (prevProps, nextProps) => {
+  return (
+    prevProps.selected === nextProps.selected &&
+    prevProps.node.attrs.code === nextProps.node.attrs.code
+  );
+});

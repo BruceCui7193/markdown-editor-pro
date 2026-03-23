@@ -41,7 +41,20 @@ export const MathInline = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(MathInlineView);
+    return ReactNodeViewRenderer(MathInlineView, {
+      update: ({ oldNode, newNode, updateProps }) => {
+        if (oldNode.type !== newNode.type) {
+          return false;
+        }
+
+        if (oldNode.attrs.value === newNode.attrs.value) {
+          return true;
+        }
+
+        updateProps();
+        return true;
+      },
+    });
   },
 
   addCommands() {

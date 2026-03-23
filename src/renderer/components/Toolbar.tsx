@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps } from 'react';
+import { memo, useEffect, useRef, useState, type ComponentProps } from 'react';
 import clsx from 'clsx';
 import type { Editor } from '@tiptap/react';
 import type { ThemeMode } from '@shared/contracts';
@@ -55,7 +55,7 @@ function ToolbarButton({
   );
 }
 
-export default function Toolbar({
+function Toolbar({
   editor,
   theme,
   themePalette,
@@ -424,3 +424,5 @@ export default function Toolbar({
     </>
   );
 }
+
+export default memo(Toolbar);

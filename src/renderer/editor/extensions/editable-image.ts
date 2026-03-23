@@ -18,6 +18,26 @@ export const EditableImage = Image.extend<EditableImageOptions>({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(ImageView);
+    return ReactNodeViewRenderer(ImageView, {
+      update: ({ oldNode, newNode, updateProps }) => {
+        if (oldNode.type !== newNode.type) {
+          return false;
+        }
+
+        const oldAttrs = oldNode.attrs ?? {};
+        const newAttrs = newNode.attrs ?? {};
+        const unchanged =
+          oldAttrs.src === newAttrs.src &&
+          oldAttrs.alt === newAttrs.alt &&
+          oldAttrs.title === newAttrs.title;
+
+        if (unchanged) {
+          return true;
+        }
+
+        updateProps();
+        return true;
+      },
+    });
   },
 });

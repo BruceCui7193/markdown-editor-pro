@@ -26,8 +26,17 @@ interface DefinitionContext {
   definitions: Map<string, MarkdownNode>;
 }
 
-function normalizeMathDelimiters(markdown: string): string {
+interface MathPlaceholder {
+  kind: 'inline' | 'block';
+  value: string;
+}
+
+function normalizeMathDelimiters(markdown: string): {
+  markdown: string;
+  placeholders: Map<string, MathPlaceholder>;
+} {
   const placeholders: string[] = [];
+  const mathPlaceholders = new Map<string, MathPlaceholder>();
 
   const protect = (pattern: RegExp, input: string): string =>
     input.replace(pattern, (match) => {
@@ -36,22 +45,35 @@ function normalizeMathDelimiters(markdown: string): string {
       return token;
     });
 
+  const createMathToken = (kind: 'inline' | 'block', value: string): string => {
+    const token = `@@MARKDOWN_EDITOR_MATH_${mathPlaceholders.size}@@`;
+    mathPlaceholders.set(token, { kind, value });
+    return kind === 'block' ? `\n${token}\n` : token;
+  };
+
   let normalized = markdown;
   normalized = protect(/```[\s\S]*?```/g, normalized);
   normalized = protect(/~~~[\s\S]*?~~~/g, normalized);
   normalized = protect(/`[^`\n]+`/g, normalized);
-  normalized = normalizeBlockMathPairs(normalized, '\\[', '\\]');
-  normalized = normalizeBlockMathPairs(normalized, '$$', '$$');
-  normalized = normalized.replace(/\\\((.+?)\\\)/gs, (_match, expression) => {
-    return `$${String(expression).trim()}$`;
-  });
+  normalized = normalizeBlockMathPairs(normalized, '\\[', '\\]', createMathToken);
+  normalized = normalizeBlockMathPairs(normalized, '$$', '$$', createMathToken);
+  normalized = normalizeInlineMathPairs(normalized, '\\(', '\\)', createMathToken);
+  normalized = normalizeInlineMathPairs(normalized, '$', '$', createMathToken);
 
-  return normalized.replace(/@@MARKDOWN_EDITOR_TOKEN_(\d+)@@/g, (_match, index) => {
-    return placeholders[Number(index)] ?? '';
-  });
+  return {
+    markdown: normalized.replace(/@@MARKDOWN_EDITOR_TOKEN_(\d+)@@/g, (_match, index) => {
+      return placeholders[Number(index)] ?? '';
+    }),
+    placeholders: mathPlaceholders,
+  };
 }
 
-function normalizeBlockMathPairs(markdown: string, open: string, close: string): string {
+function normalizeBlockMathPairs(
+  markdown: string,
+  open: string,
+  close: string,
+  createMathToken: (kind: 'inline' | 'block', value: string) => string,
+): string {
   let result = '';
   let cursor = 0;
 
@@ -70,15 +92,134 @@ function normalizeBlockMathPairs(markdown: string, open: string, close: string):
     }
 
     const expression = markdown.slice(cursor + open.length, closeIndex).trim();
-    const needsLeadingBreak = result.length > 0 && !result.endsWith('\n');
-    const needsTrailingBreak =
-      closeIndex + close.length < markdown.length && markdown[closeIndex + close.length] !== '\n';
-
-    result += `${needsLeadingBreak ? '\n' : ''}$$\n${expression}\n$$${needsTrailingBreak ? '\n' : ''}`;
+    result += createMathToken('block', expression);
     cursor = closeIndex + close.length;
   }
 
   return result;
+}
+
+function normalizeInlineMathPairs(
+  markdown: string,
+  open: string,
+  close: string,
+  createMathToken: (kind: 'inline' | 'block', value: string) => string,
+): string {
+  let result = '';
+  let cursor = 0;
+
+  while (cursor < markdown.length) {
+    if (!markdown.startsWith(open, cursor)) {
+      result += markdown[cursor];
+      cursor += 1;
+      continue;
+    }
+
+    if (open === '$' && markdown.startsWith('$$', cursor)) {
+      result += markdown[cursor];
+      cursor += 1;
+      continue;
+    }
+
+    const searchStart = cursor + open.length;
+    const closeIndex = findInlineMathClose(markdown, searchStart, close);
+    if (closeIndex === -1) {
+      result += markdown[cursor];
+      cursor += 1;
+      continue;
+    }
+
+    const expression = markdown.slice(searchStart, closeIndex).trim();
+    if (!expression) {
+      result += markdown[cursor];
+      cursor += 1;
+      continue;
+    }
+
+    result += createMathToken('inline', expression);
+    cursor = closeIndex + close.length;
+  }
+
+  return result;
+}
+
+function findInlineMathClose(markdown: string, cursor: number, close: string): number {
+  let index = cursor;
+
+  while (index < markdown.length) {
+    if (markdown[index] === '\n') {
+      return -1;
+    }
+
+    if (markdown.startsWith(close, index)) {
+      return index;
+    }
+
+    index += 1;
+  }
+
+  return -1;
+}
+
+function splitTextWithMathPlaceholders(
+  text: string,
+  placeholders: Map<string, MathPlaceholder>,
+): JSONContent[] {
+  const tokenPattern = /@@MARKDOWN_EDITOR_MATH_\d+@@/g;
+  const parts: JSONContent[] = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(tokenPattern)) {
+    const token = match[0];
+    const start = match.index ?? 0;
+    if (start > lastIndex) {
+      parts.push({
+        type: 'text',
+        text: text.slice(lastIndex, start),
+      });
+    }
+
+    const placeholder = placeholders.get(token);
+    if (placeholder?.kind === 'inline') {
+      parts.push({
+        type: 'mathInline',
+        attrs: {
+          value: placeholder.value,
+        },
+      });
+    } else {
+      parts.push({
+        type: 'text',
+        text: token,
+      });
+    }
+
+    lastIndex = start + token.length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({
+      type: 'text',
+      text: text.slice(lastIndex),
+    });
+  }
+
+  return parts;
+}
+
+function getBlockMathPlaceholder(node: MarkdownNode, placeholders: Map<string, MathPlaceholder>): string | null {
+  if (node.type !== 'paragraph') {
+    return null;
+  }
+
+  const children = node.children ?? [];
+  if (children.length !== 1 || children[0]?.type !== 'text') {
+    return null;
+  }
+
+  const token = String(children[0].value ?? '').trim();
+  const placeholder = placeholders.get(token);
+  return placeholder?.kind === 'block' ? placeholder.value : null;
 }
 
 function collectDefinitions(root: MarkdownNode): DefinitionContext {
@@ -106,14 +247,22 @@ function markify(content: JSONContent[], mark: NonNullable<JSONContent['marks']>
   });
 }
 
-function inlineChildrenToTiptap(children: MarkdownNode[], context: DefinitionContext): JSONContent[] {
-  return children.flatMap((child) => inlineToTiptap(child, context));
+function inlineChildrenToTiptap(
+  children: MarkdownNode[],
+  context: DefinitionContext,
+  mathPlaceholders: Map<string, MathPlaceholder>,
+): JSONContent[] {
+  return children.flatMap((child) => inlineToTiptap(child, context, mathPlaceholders));
 }
 
-function inlineToTiptap(node: MarkdownNode, context: DefinitionContext): JSONContent[] {
+function inlineToTiptap(
+  node: MarkdownNode,
+  context: DefinitionContext,
+  mathPlaceholders: Map<string, MathPlaceholder>,
+): JSONContent[] {
   switch (node.type) {
     case 'text':
-      return node.value ? [{ type: 'text', text: String(node.value) }] : [];
+      return node.value ? splitTextWithMathPlaceholders(String(node.value), mathPlaceholders) : [];
     case 'inlineCode':
       return node.value
         ? [
@@ -127,13 +276,13 @@ function inlineToTiptap(node: MarkdownNode, context: DefinitionContext): JSONCon
     case 'break':
       return [{ type: 'hardBreak' }];
     case 'strong':
-      return markify(inlineChildrenToTiptap(node.children ?? [], context), { type: 'bold' });
+      return markify(inlineChildrenToTiptap(node.children ?? [], context, mathPlaceholders), { type: 'bold' });
     case 'emphasis':
-      return markify(inlineChildrenToTiptap(node.children ?? [], context), { type: 'italic' });
+      return markify(inlineChildrenToTiptap(node.children ?? [], context, mathPlaceholders), { type: 'italic' });
     case 'delete':
-      return markify(inlineChildrenToTiptap(node.children ?? [], context), { type: 'strike' });
+      return markify(inlineChildrenToTiptap(node.children ?? [], context, mathPlaceholders), { type: 'strike' });
     case 'link':
-      return markify(inlineChildrenToTiptap(node.children ?? [], context), {
+      return markify(inlineChildrenToTiptap(node.children ?? [], context, mathPlaceholders), {
         type: 'link',
         attrs: {
           href: node.url,
@@ -146,7 +295,7 @@ function inlineToTiptap(node: MarkdownNode, context: DefinitionContext): JSONCon
         return [{ type: 'text', text: String(node.label ?? node.identifier ?? '') }];
       }
 
-      return markify(inlineChildrenToTiptap(node.children ?? [], context), {
+      return markify(inlineChildrenToTiptap(node.children ?? [], context, mathPlaceholders), {
         type: 'link',
         attrs: {
           href: definition.url,
@@ -201,7 +350,7 @@ function inlineToTiptap(node: MarkdownNode, context: DefinitionContext): JSONCon
         },
       ];
     case 'html':
-      return node.value ? [{ type: 'text', text: String(node.value) }] : [];
+      return [{ type: 'text', text: String(node.value) }];
     default:
       return [];
   }
@@ -211,8 +360,9 @@ function tableCellToNode(
   cell: MarkdownNode,
   type: 'tableCell' | 'tableHeader',
   context: DefinitionContext,
+  mathPlaceholders: Map<string, MathPlaceholder>,
 ): JSONContent {
-  const content = inlineChildrenToTiptap(cell.children ?? [], context);
+  const content = inlineChildrenToTiptap(cell.children ?? [], context, mathPlaceholders);
 
   return {
     type,
@@ -225,16 +375,36 @@ function tableCellToNode(
   };
 }
 
-function flowChildrenToTiptap(children: MarkdownNode[], context: DefinitionContext): JSONContent[] {
+function flowChildrenToTiptap(
+  children: MarkdownNode[],
+  context: DefinitionContext,
+  mathPlaceholders: Map<string, MathPlaceholder>,
+): JSONContent[] {
   return children
     .filter((child) => child.type !== 'definition')
-    .flatMap((child) => flowToTiptap(child, context));
+    .flatMap((child) => flowToTiptap(child, context, mathPlaceholders));
 }
 
-function flowToTiptap(node: MarkdownNode, context: DefinitionContext): JSONContent[] {
+function flowToTiptap(
+  node: MarkdownNode,
+  context: DefinitionContext,
+  mathPlaceholders: Map<string, MathPlaceholder>,
+): JSONContent[] {
   switch (node.type) {
     case 'paragraph': {
-      const content = inlineChildrenToTiptap(node.children ?? [], context);
+      const blockMathValue = getBlockMathPlaceholder(node, mathPlaceholders);
+      if (blockMathValue !== null) {
+        return [
+          {
+            type: 'mathBlock',
+            attrs: {
+              value: blockMathValue,
+            },
+          },
+        ];
+      }
+
+      const content = inlineChildrenToTiptap(node.children ?? [], context, mathPlaceholders);
 
       if (content.length === 1 && content[0].type === 'image') {
         return content;
@@ -247,14 +417,14 @@ function flowToTiptap(node: MarkdownNode, context: DefinitionContext): JSONConte
         {
           type: 'heading',
           attrs: { level: node.depth ?? 1 },
-          content: inlineChildrenToTiptap(node.children ?? [], context),
+          content: inlineChildrenToTiptap(node.children ?? [], context, mathPlaceholders),
         },
       ];
     case 'blockquote':
       return [
         {
           type: 'blockquote',
-          content: flowChildrenToTiptap(node.children ?? [], context),
+          content: flowChildrenToTiptap(node.children ?? [], context, mathPlaceholders),
         },
       ];
     case 'list': {
@@ -269,7 +439,7 @@ function flowToTiptap(node: MarkdownNode, context: DefinitionContext): JSONConte
           content: (node.children ?? []).map((child: MarkdownNode) => ({
             type: isTaskList ? 'taskItem' : 'listItem',
             attrs: isTaskList ? { checked: Boolean(child.checked) } : undefined,
-            content: flowChildrenToTiptap(child.children ?? [], context),
+            content: flowChildrenToTiptap(child.children ?? [], context, mathPlaceholders),
           })),
         },
       ];
@@ -311,7 +481,12 @@ function flowToTiptap(node: MarkdownNode, context: DefinitionContext): JSONConte
           content: (node.children ?? []).map((row: MarkdownNode, index: number) => ({
             type: 'tableRow',
             content: (row.children ?? []).map((cell: MarkdownNode) =>
-              tableCellToNode(cell, index === 0 ? 'tableHeader' : 'tableCell', context),
+              tableCellToNode(
+                cell,
+                index === 0 ? 'tableHeader' : 'tableCell',
+                context,
+                mathPlaceholders,
+              ),
             ),
           })),
         },
@@ -325,7 +500,7 @@ function flowToTiptap(node: MarkdownNode, context: DefinitionContext): JSONConte
           attrs: {
             label: String(node.label ?? node.identifier ?? ''),
           },
-          content: flowChildrenToTiptap(node.children ?? [], context),
+          content: flowChildrenToTiptap(node.children ?? [], context, mathPlaceholders),
         },
       ];
     case 'html':
@@ -525,12 +700,12 @@ function flowToMarkdown(node: JSONContent): MarkdownNode[] {
 
 export function parseMarkdown(markdown: string): JSONContent {
   const normalized = normalizeMathDelimiters(markdown);
-  const tree = parser.parse(normalized) as MarkdownNode;
+  const tree = parser.parse(normalized.markdown) as MarkdownNode;
   const context = collectDefinitions(tree);
 
   return {
     type: 'doc',
-    content: flowChildrenToTiptap(tree.children ?? [], context),
+    content: flowChildrenToTiptap(tree.children ?? [], context, normalized.placeholders),
   };
 }
 

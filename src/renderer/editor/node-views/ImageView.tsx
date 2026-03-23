@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { NodeViewWrapper } from '@tiptap/react';
 import type { NodeViewProps } from '@tiptap/react';
 
@@ -63,7 +63,7 @@ function parseImageMarkdown(markdown: string): ParsedImageMarkdown | null {
   return { alt, src, title };
 }
 
-export default function ImageView({ extension, node, selected, updateAttributes }: NodeViewProps) {
+function ImageView({ extension, node, selected, updateAttributes }: NodeViewProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(
     formatImageMarkdown({
@@ -166,3 +166,12 @@ export default function ImageView({ extension, node, selected, updateAttributes 
     </NodeViewWrapper>
   );
 }
+
+export default memo(ImageView, (prevProps, nextProps) => {
+  return (
+    prevProps.selected === nextProps.selected &&
+    prevProps.node.attrs.src === nextProps.node.attrs.src &&
+    prevProps.node.attrs.alt === nextProps.node.attrs.alt &&
+    prevProps.node.attrs.title === nextProps.node.attrs.title
+  );
+});
