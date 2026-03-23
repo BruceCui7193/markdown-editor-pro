@@ -571,6 +571,7 @@
 }
 
 .editor-frame {
+  position: relative;
   height: 100%;
   overflow: auto;
   border: 1px solid var(--ui-border);
@@ -582,6 +583,21 @@
 
 .editor-frame.is-source {
   padding: 0;
+}
+
+.editor-loading {
+  position: absolute;
+  inset: 18px 20px auto;
+  z-index: 5;
+  padding: 10px 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--ui-bg-strong) 92%, transparent);
+  box-shadow: var(--ui-shadow);
+  color: var(--ui-text);
+  font-size: 13px;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
 }
 
 .editor-frame .tiptap,

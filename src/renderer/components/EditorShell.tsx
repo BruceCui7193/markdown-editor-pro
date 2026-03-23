@@ -1,4 +1,4 @@
-import {
+﻿import {
   memo,
   useCallback,
   useEffect,
@@ -10,6 +10,7 @@ import {
   type RefObject,
 } from 'react';
 import { EditorContent, useEditor, type Editor as TiptapEditor } from '@tiptap/react';
+import type { JSONContent } from '@tiptap/core';
 import type { OpenedFolder, ThemeMode } from '@shared/contracts';
 import type { DocumentStats, EditorDocumentState } from '../App';
 import type { ThemePalette } from '../theme';
@@ -41,6 +42,28 @@ interface EditorShellProps {
 
 function computeSourceStats(markdown: string): DocumentStats {
   return calculateDocumentStats(markdown);
+}
+
+interface WorkerParseSuccess {
+  id: number;
+  ok: true;
+  content: JSONContent;
+  outline: OutlineItem[];
+}
+
+interface WorkerParseFailure {
+  id: number;
+  ok: false;
+  error: string;
+}
+
+type WorkerParseResponse = WorkerParseSuccess | WorkerParseFailure;
+
+function createEmptyDocument(): JSONContent {
+  return {
+    type: 'doc',
+    content: [],
+  };
 }
 
 function toFileUrl(filePath: string): string {
@@ -122,6 +145,8 @@ function areOutlinesEqual(left: OutlineItem[], right: OutlineItem[]): boolean {
 
 type IdleHandle = number;
 
+const LARGE_DOCUMENT_THRESHOLD = 200_000;
+
 function scheduleIdleWork(task: () => void, timeout = 1000): IdleHandle {
   return window.setTimeout(task, timeout);
 }
@@ -134,12 +159,19 @@ function cancelIdleWork(handle: IdleHandle | null): void {
   window.clearTimeout(handle);
 }
 
+function createMarkdownWorker(): Worker {
+  return new Worker(new URL('../editor/markdown.worker.ts', import.meta.url), {
+    type: 'module',
+  });
+}
+
 const VISUAL_META_SYNC_DELAY_MS = 260;
 const VISUAL_DOCUMENT_SYNC_TIMEOUT_MS = 1400;
 
 interface EditorViewportProps {
   editor: TiptapEditor | null;
   editorHostRef: RefObject<HTMLDivElement | null>;
+  loading: boolean;
   sourceMode: boolean;
   sourceDraft: string;
   sourceTextareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -150,6 +182,7 @@ interface EditorViewportProps {
 const EditorViewport = memo(function EditorViewport({
   editor,
   editorHostRef,
+  loading,
   sourceMode,
   sourceDraft,
   sourceTextareaRef,
@@ -161,6 +194,7 @@ const EditorViewport = memo(function EditorViewport({
       className={sourceMode ? 'editor-frame is-source' : 'editor-frame'}
       onMouseDown={onFrameMouseDown}
     >
+      {loading ? <div className="editor-loading">正在载入文档...</div> : null}
       {sourceMode ? (
         <textarea
           ref={sourceTextareaRef}
@@ -198,15 +232,20 @@ export default function EditorShell({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sourceTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editorHostRef = useRef<HTMLDivElement | null>(null);
-  const initialContentRef = useRef(parseMarkdown(document.markdown));
+  const markdownWorkerRef = useRef<Worker | null>(null);
+  const markdownWorkerRequestRef = useRef(0);
+  const latestExternalLoadRef = useRef(0);
+  const initialContentRef = useRef<JSONContent>(createEmptyDocument());
   const documentPathRef = useRef(document.path);
   const documentMarkdownRef = useRef(document.markdown);
+  const largeDocumentModeRef = useRef(document.markdown.length >= LARGE_DOCUMENT_THRESHOLD);
   const visualMarkdownRef = useRef(document.markdown);
   const visualStatsRef = useRef(document.stats);
   const externalUpdateRef = useRef(false);
-  const lastEmittedMarkdownRef = useRef(document.markdown);
+  const lastEmittedMarkdownRef = useRef('');
   const windowDirtyRef = useRef(document.dirty);
   const skipNextDocChangeRef = useRef(true);
+  const skipNextDocChangeTimerRef = useRef<number | null>(null);
   const pendingVisualMetaSyncRef = useRef<number | null>(null);
   const pendingVisualDocumentSyncRef = useRef<IdleHandle | null>(null);
   const [toolbarVisible, setToolbarVisible] = useState(() => {
@@ -222,6 +261,7 @@ export default function EditorShell({
   const [sourceDraft, setSourceDraft] = useState(document.markdown);
   const [liveStats, setLiveStats] = useState(document.stats);
   const [liveDirty, setLiveDirty] = useState(document.dirty);
+  const [loadingExternalDocument, setLoadingExternalDocument] = useState(false);
   const sourceModeRef = useRef(sourceMode);
   const sourceDraftRef = useRef(sourceDraft);
   const [outline, setOutline] = useState<OutlineItem[]>(() => extractOutline(document.markdown));
@@ -238,6 +278,10 @@ export default function EditorShell({
     visualMarkdownRef.current = document.markdown;
     visualStatsRef.current = document.stats;
   }, [document.markdown, document.stats]);
+
+  useEffect(() => {
+    largeDocumentModeRef.current = document.markdown.length >= LARGE_DOCUMENT_THRESHOLD;
+  }, [document.markdown.length]);
 
   useEffect(() => {
     windowDirtyRef.current = document.dirty;
@@ -258,6 +302,66 @@ export default function EditorShell({
   useEffect(() => {
     sourceDraftRef.current = sourceDraft;
   }, [sourceDraft]);
+
+  const armSkipNextDocChange = useCallback(() => {
+    skipNextDocChangeRef.current = true;
+    if (skipNextDocChangeTimerRef.current !== null) {
+      window.clearTimeout(skipNextDocChangeTimerRef.current);
+    }
+
+    skipNextDocChangeTimerRef.current = window.setTimeout(() => {
+      skipNextDocChangeRef.current = false;
+      skipNextDocChangeTimerRef.current = null;
+    }, 0);
+  }, []);
+
+  const parseMarkdownInWorker = useCallback((markdown: string) => {
+    if (!markdownWorkerRef.current) {
+      markdownWorkerRef.current = createMarkdownWorker();
+    }
+
+    const worker = markdownWorkerRef.current;
+    const requestId = ++markdownWorkerRequestRef.current;
+
+    return new Promise<WorkerParseSuccess>((resolve, reject) => {
+      const handleMessage = (event: MessageEvent<WorkerParseResponse>) => {
+        if (event.data.id !== requestId) {
+          return;
+        }
+
+        worker.removeEventListener('message', handleMessage);
+        worker.removeEventListener('error', handleError);
+
+        if (event.data.ok) {
+          resolve(event.data);
+          return;
+        }
+
+        reject(new Error(event.data.error));
+      };
+
+      const handleError = (event: ErrorEvent) => {
+        worker.removeEventListener('message', handleMessage);
+        worker.removeEventListener('error', handleError);
+        reject(event.error instanceof Error ? event.error : new Error(event.message));
+      };
+
+      worker.addEventListener('message', handleMessage);
+      worker.addEventListener('error', handleError, { once: true });
+      worker.postMessage({ id: requestId, markdown });
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      markdownWorkerRef.current?.terminate();
+      markdownWorkerRef.current = null;
+      if (skipNextDocChangeTimerRef.current !== null) {
+        window.clearTimeout(skipNextDocChangeTimerRef.current);
+        skipNextDocChangeTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (sourceMode) {
@@ -340,7 +444,6 @@ export default function EditorShell({
 
   const editor = useEditor({
     extensions,
-    autofocus: 'end',
     content: initialContentRef.current,
     shouldRerenderOnTransaction: false,
     editorProps,
@@ -353,7 +456,7 @@ export default function EditorShell({
       visualMarkdownRef.current = canonicalMarkdown;
       visualStatsRef.current = stats;
       lastEmittedMarkdownRef.current = canonicalMarkdown;
-      skipNextDocChangeRef.current = true;
+      armSkipNextDocChange();
     },
     onUpdate: ({ editor: nextEditor, transaction }) => {
       if (externalUpdateRef.current || sourceModeRef.current) {
@@ -366,11 +469,13 @@ export default function EditorShell({
 
       if (skipNextDocChangeRef.current) {
         skipNextDocChangeRef.current = false;
-        const canonicalMarkdown = serializeMarkdown(nextEditor.getJSON());
-        const stats = calculateDocumentStats(getEditorPlainText(nextEditor));
-        visualMarkdownRef.current = canonicalMarkdown;
-        visualStatsRef.current = stats;
-        lastEmittedMarkdownRef.current = canonicalMarkdown;
+        if (!largeDocumentModeRef.current) {
+          const canonicalMarkdown = serializeMarkdown(nextEditor.getJSON());
+          const stats = calculateDocumentStats(getEditorPlainText(nextEditor));
+          visualMarkdownRef.current = canonicalMarkdown;
+          visualStatsRef.current = stats;
+          lastEmittedMarkdownRef.current = canonicalMarkdown;
+        }
         setLiveDirty(false);
         return;
       }
@@ -384,6 +489,19 @@ export default function EditorShell({
 
       if (pendingVisualMetaSyncRef.current !== null) {
         window.clearTimeout(pendingVisualMetaSyncRef.current);
+      }
+
+      if (largeDocumentModeRef.current) {
+        pendingVisualMetaSyncRef.current = window.setTimeout(() => {
+          pendingVisualMetaSyncRef.current = null;
+        }, 900);
+
+        if (pendingVisualDocumentSyncRef.current !== null) {
+          cancelIdleWork(pendingVisualDocumentSyncRef.current);
+          pendingVisualDocumentSyncRef.current = null;
+        }
+
+        return;
       }
 
       pendingVisualMetaSyncRef.current = window.setTimeout(() => {
@@ -412,6 +530,17 @@ export default function EditorShell({
       }, VISUAL_DOCUMENT_SYNC_TIMEOUT_MS);
     },
   }, []);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    editor.view.dom.setAttribute(
+      'spellcheck',
+      largeDocumentModeRef.current ? 'false' : 'true',
+    );
+  }, [document.markdown.length, editor]);
 
   function flushVisualSync(targetEditor = editor): { markdown: string; stats: DocumentStats } | null {
     if (!targetEditor) {
@@ -459,21 +588,135 @@ export default function EditorShell({
     }
 
     if (document.markdown === lastEmittedMarkdownRef.current) {
+      setLoadingExternalDocument(false);
       return;
     }
 
-    externalUpdateRef.current = true;
-    skipNextDocChangeRef.current = true;
-    editor.commands.setContent(parseMarkdown(document.markdown), false);
-    externalUpdateRef.current = false;
-    lastEmittedMarkdownRef.current = document.markdown;
-    const nextOutline = extractOutline(document.markdown);
-    setOutline((current) => (areOutlinesEqual(current, nextOutline) ? current : nextOutline));
-    const stats = calculateDocumentStats(getEditorPlainText(editor));
-    setLiveStats((current) => (areStatsEqual(current, stats) ? current : stats));
-    setLiveDirty(document.dirty);
-    onDocumentMetaChange(document.dirty);
-  }, [document.dirty, document.markdown, editor, onDocumentMetaChange, sourceMode]);
+    const loadId = latestExternalLoadRef.current + 1;
+    latestExternalLoadRef.current = loadId;
+    setLoadingExternalDocument(true);
+    editor.setEditable(false);
+
+    if (document.markdown.length < LARGE_DOCUMENT_THRESHOLD) {
+      void import('../editor/markdown')
+        .then(({ parseMarkdown }) => {
+          if (latestExternalLoadRef.current !== loadId || sourceModeRef.current || !editor) {
+            return;
+          }
+
+          externalUpdateRef.current = true;
+          armSkipNextDocChange();
+          editor.commands.setContent(parseMarkdown(document.markdown), false);
+          externalUpdateRef.current = false;
+
+          const canonicalMarkdown = serializeMarkdown(editor.getJSON());
+          const stats = calculateDocumentStats(getEditorPlainText(editor));
+          const nextOutline = extractOutline(document.markdown);
+          visualMarkdownRef.current = canonicalMarkdown;
+          visualStatsRef.current = stats;
+          lastEmittedMarkdownRef.current = canonicalMarkdown;
+          setOutline((current) => (areOutlinesEqual(current, nextOutline) ? current : nextOutline));
+          setLiveStats((current) => (areStatsEqual(current, stats) ? current : stats));
+          setLiveDirty(document.dirty);
+        })
+        .catch(() => {
+          if (latestExternalLoadRef.current !== loadId || !editor) {
+            return;
+          }
+
+          const emptyStats = computeSourceStats('');
+          externalUpdateRef.current = true;
+          armSkipNextDocChange();
+          editor.commands.setContent(createEmptyDocument(), false);
+          externalUpdateRef.current = false;
+          visualMarkdownRef.current = '';
+          visualStatsRef.current = emptyStats;
+          lastEmittedMarkdownRef.current = '';
+          setOutline((current) => (current.length === 0 ? current : []));
+          setLiveStats((current) => (areStatsEqual(current, emptyStats) ? current : emptyStats));
+          setLiveDirty(document.dirty);
+        })
+        .finally(() => {
+          if (latestExternalLoadRef.current === loadId) {
+            editor.setEditable(true);
+            setLoadingExternalDocument(false);
+          }
+        });
+
+      return;
+    }
+
+    void parseMarkdownInWorker(document.markdown)
+      .then((result) => {
+        if (latestExternalLoadRef.current !== loadId || sourceModeRef.current || !editor) {
+          return;
+        }
+
+        externalUpdateRef.current = true;
+        armSkipNextDocChange();
+        editor.commands.setContent(result.content, false);
+        externalUpdateRef.current = false;
+
+        const canonicalMarkdown = serializeMarkdown(editor.getJSON());
+        const stats = calculateDocumentStats(getEditorPlainText(editor));
+        visualMarkdownRef.current = canonicalMarkdown;
+        visualStatsRef.current = stats;
+        lastEmittedMarkdownRef.current = canonicalMarkdown;
+        setOutline((current) => (areOutlinesEqual(current, result.outline) ? current : result.outline));
+        setLiveStats((current) => (areStatsEqual(current, stats) ? current : stats));
+        setLiveDirty(document.dirty);
+      })
+      .catch(async () => {
+        if (latestExternalLoadRef.current !== loadId || !editor) {
+          return;
+        }
+
+        try {
+          const { parseMarkdown } = await import('../editor/markdown');
+          if (latestExternalLoadRef.current !== loadId || !editor) {
+            return;
+          }
+
+          externalUpdateRef.current = true;
+          armSkipNextDocChange();
+          editor.commands.setContent(parseMarkdown(document.markdown), false);
+          externalUpdateRef.current = false;
+
+          const canonicalMarkdown = serializeMarkdown(editor.getJSON());
+          const stats = calculateDocumentStats(getEditorPlainText(editor));
+          const nextOutline = extractOutline(document.markdown);
+          visualMarkdownRef.current = canonicalMarkdown;
+          visualStatsRef.current = stats;
+          lastEmittedMarkdownRef.current = canonicalMarkdown;
+          setOutline((current) => (areOutlinesEqual(current, nextOutline) ? current : nextOutline));
+          setLiveStats((current) => (areStatsEqual(current, stats) ? current : stats));
+          setLiveDirty(document.dirty);
+          return;
+        } catch {
+          if (latestExternalLoadRef.current !== loadId || !editor) {
+            return;
+          }
+
+          const emptyStats = computeSourceStats('');
+          externalUpdateRef.current = true;
+          armSkipNextDocChange();
+          editor.commands.setContent(createEmptyDocument(), false);
+          externalUpdateRef.current = false;
+          visualMarkdownRef.current = '';
+          visualStatsRef.current = emptyStats;
+          lastEmittedMarkdownRef.current = '';
+          setOutline((current) => (current.length === 0 ? current : []));
+          setLiveStats((current) => (areStatsEqual(current, emptyStats) ? current : emptyStats));
+          setLiveDirty(document.dirty);
+        }
+      })
+      .finally(() => {
+        if (latestExternalLoadRef.current === loadId) {
+          editor.setEditable(true);
+          setLoadingExternalDocument(false);
+        }
+      });
+  }, [document.markdown, document.path, editor, parseMarkdownInWorker, sourceMode]);
 
   useEffect(() => {
     if (sourceMode) {
@@ -737,6 +980,7 @@ export default function EditorShell({
         <EditorViewport
           editor={editor}
           editorHostRef={editorHostRef}
+          loading={loadingExternalDocument}
           onFrameMouseDown={handleFrameMouseDown}
           onSourceChange={handleSourceChange}
           sourceDraft={sourceDraft}
@@ -803,3 +1047,4 @@ export default function EditorShell({
     </div>
   );
 }
+
