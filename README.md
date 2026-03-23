@@ -87,7 +87,7 @@ npm run build:dir
 
 ## 文件关联
 
-`.md` 和 `.markdown` 文件关联配置位于 [electron-builder.yml](D:\Program Files\MarkdownEditor\electron-builder.yml)。
+`.md` 和 `.markdown` 文件关联配置位于 \[electron-builder.yml]。
 
 安装完成后，Windows 中可将 Markdown 文件默认打开方式设置为本应用。
 
