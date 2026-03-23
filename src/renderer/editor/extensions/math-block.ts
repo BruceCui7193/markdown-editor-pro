@@ -1,4 +1,4 @@
-import { mergeAttributes, Node } from '@tiptap/core';
+import { InputRule, mergeAttributes, Node } from '@tiptap/core';
 import { ReactNodeViewRenderer } from '@tiptap/react';
 import MathBlockView from '../node-views/MathBlockView';
 
@@ -67,5 +67,78 @@ export const MathBlock = Node.create({
             attrs: { value },
           }),
     };
+  },
+
+  addKeyboardShortcuts() {
+    return {
+      Enter: () => {
+        const { state } = this.editor;
+        const { selection } = state;
+        const { $from } = selection;
+
+        if (!selection.empty || $from.parent.type.name !== 'paragraph') {
+          return false;
+        }
+
+        if ($from.parent.textContent.trim() !== '$$') {
+          return false;
+        }
+
+        const from = $from.before();
+        const to = from + $from.parent.nodeSize;
+
+        return this.editor.commands.command(({ tr, dispatch }) => {
+          const node = state.schema.nodes.mathBlock?.create({ value: '' });
+          if (!node) {
+            return false;
+          }
+
+          if (dispatch) {
+            dispatch(tr.replaceWith(from, to, node).scrollIntoView());
+          }
+
+          return true;
+        });
+      },
+    };
+  },
+
+  addInputRules() {
+    return [
+      new InputRule({
+        find: /^\$\$([^\n]+)\$\$$/,
+        handler: ({ chain, range, match }) => {
+          const value = String(match[1] ?? '').trim();
+          if (!value) {
+            return;
+          }
+
+          chain()
+            .deleteRange(range)
+            .insertContent({
+              type: this.name,
+              attrs: { value },
+            })
+            .run();
+        },
+      }),
+      new InputRule({
+        find: /^\\\[([^\n]+)\\\]$/,
+        handler: ({ chain, range, match }) => {
+          const value = String(match[1] ?? '').trim();
+          if (!value) {
+            return;
+          }
+
+          chain()
+            .deleteRange(range)
+            .insertContent({
+              type: this.name,
+              attrs: { value },
+            })
+            .run();
+        },
+      }),
+    ];
   },
 });

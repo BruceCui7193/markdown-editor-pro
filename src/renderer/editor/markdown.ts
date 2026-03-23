@@ -709,6 +709,10 @@ export function parseMarkdown(markdown: string): JSONContent {
   };
 }
 
+export function parseMarkdownFragment(markdown: string): JSONContent[] {
+  return parseMarkdown(markdown).content ?? [];
+}
+
 export function serializeMarkdown(document: JSONContent): string {
   const tree = {
     type: 'root',

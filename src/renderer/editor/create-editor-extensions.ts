@@ -16,7 +16,9 @@ import { FootnoteReference } from './extensions/footnote-reference';
 import { MathBlock } from './extensions/math-block';
 import { MathInline } from './extensions/math-inline';
 import { MermaidBlock } from './extensions/mermaid-block';
+import { TypingShortcuts } from './extensions/typing-shortcuts';
 import { createImageDropPasteExtension } from './plugins/image-drop-paste';
+import { createMarkdownPasteExtension } from './plugins/markdown-paste';
 import bash from 'highlight.js/lib/languages/bash';
 import cpp from 'highlight.js/lib/languages/cpp';
 import csharp from 'highlight.js/lib/languages/csharp';
@@ -120,8 +122,10 @@ export function createEditorExtensions({
     MathInline,
     MathBlock,
     MermaidBlock,
+    TypingShortcuts,
     FootnoteReference,
     FootnoteDefinition,
+    createMarkdownPasteExtension(),
     createImageDropPasteExtension(onUploadImage),
   ];
 }

@@ -1,4 +1,4 @@
-import { mergeAttributes, Node } from '@tiptap/core';
+import { InputRule, mergeAttributes, Node } from '@tiptap/core';
 import { ReactNodeViewRenderer } from '@tiptap/react';
 import MathInlineView from '../node-views/MathInlineView';
 
@@ -67,5 +67,44 @@ export const MathInline = Node.create({
             attrs: { value },
           }),
     };
+  },
+
+  addInputRules() {
+    return [
+      new InputRule({
+        find: /(?<![\\$])\$([^$\n]+)\$$/,
+        handler: ({ chain, range, match }) => {
+          const value = String(match[1] ?? '').trim();
+          if (!value) {
+            return;
+          }
+
+          chain()
+            .deleteRange(range)
+            .insertContent({
+              type: this.name,
+              attrs: { value },
+            })
+            .run();
+        },
+      }),
+      new InputRule({
+        find: /\\\(([^)\n]+)\\\)$/,
+        handler: ({ chain, range, match }) => {
+          const value = String(match[1] ?? '').trim();
+          if (!value) {
+            return;
+          }
+
+          chain()
+            .deleteRange(range)
+            .insertContent({
+              type: this.name,
+              attrs: { value },
+            })
+            .run();
+        },
+      }),
+    ];
   },
 });
