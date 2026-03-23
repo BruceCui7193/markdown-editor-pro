@@ -90,10 +90,3 @@ npm run build:dir
 `.md` 和 `.markdown` 文件关联配置位于 \[electron-builder.yml]。
 
 安装完成后，Windows 中可将 Markdown 文件默认打开方式设置为本应用。
-
-## 开发说明
-
-- 应用图标默认读取 `build/icon.ico`
-- PDF 与图片导出由主进程负责
-- 图片导出采用分段截图后拼接的方式，较大的文档导出会比普通保存更慢
-- 如果修改了依赖，请同步更新锁文件后再提交
