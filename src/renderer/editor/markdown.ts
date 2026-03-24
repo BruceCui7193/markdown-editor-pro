@@ -719,7 +719,7 @@ export function serializeMarkdown(document: JSONContent): string {
     children: flowChildrenToMarkdown(document.content),
   };
 
-  const serialized = String(compiler.stringify(tree as MarkdownNode)).trimEnd();
+  const serialized = String(compiler.stringify(tree as any)).trimEnd();
   return serialized.length === 0 ? '' : `${serialized}\n`;
 }
 

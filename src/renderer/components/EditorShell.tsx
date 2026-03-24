@@ -19,6 +19,17 @@ import StatusBar from './StatusBar';
 import Sidebar from './Sidebar';
 import { createEditorExtensions } from '../editor/create-editor-extensions';
 import { parseMarkdown, serializeMarkdown, serializeMarkdownFragment } from '../editor/markdown';
+import {
+  findSourceSearchMatches,
+  findVisualSearchMatches,
+  replaceAllSourceSearchMatches,
+  replaceAllVisualSearchMatches,
+  replaceSourceSearchMatch,
+  replaceVisualSearchMatch,
+  selectVisualSearchMatch,
+  type SourceSearchMatch,
+  type VisualSearchMatch,
+} from '../editor/search';
 import { calculateDocumentStats, fileToBase64 } from '../editor/utils/helpers';
 import { extractOutline, type OutlineItem } from '../utils/document';
 
@@ -170,11 +181,12 @@ const VISUAL_DOCUMENT_SYNC_TIMEOUT_MS = 1400;
 
 interface EditorViewportProps {
   editor: TiptapEditor | null;
-  editorHostRef: RefObject<HTMLDivElement | null>;
+  editorHostRef: RefObject<HTMLDivElement>;
   loading: boolean;
+  searchPanel: JSX.Element | null;
   sourceMode: boolean;
   sourceDraft: string;
-  sourceTextareaRef: RefObject<HTMLTextAreaElement | null>;
+  sourceTextareaRef: RefObject<HTMLTextAreaElement>;
   onFrameMouseDown: (event: MouseEvent<HTMLDivElement>) => void;
   onSourceChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
 }
@@ -183,6 +195,7 @@ const EditorViewport = memo(function EditorViewport({
   editor,
   editorHostRef,
   loading,
+  searchPanel,
   sourceMode,
   sourceDraft,
   sourceTextareaRef,
@@ -195,6 +208,7 @@ const EditorViewport = memo(function EditorViewport({
       onMouseDown={onFrameMouseDown}
     >
       {loading ? <div className="editor-loading">正在载入文档...</div> : null}
+      {searchPanel}
       {sourceMode ? (
         <textarea
           ref={sourceTextareaRef}
@@ -208,6 +222,105 @@ const EditorViewport = memo(function EditorViewport({
           <EditorContent editor={editor} />
         </div>
       )}
+    </div>
+  );
+});
+
+interface SearchPanelProps {
+  caseSensitive: boolean;
+  currentMatchLabel: string;
+  open: boolean;
+  query: string;
+  replaceVisible: boolean;
+  replacement: string;
+  onCaseSensitiveChange: () => void;
+  onClose: () => void;
+  onNext: () => void;
+  onPrevious: () => void;
+  onQueryChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onReplaceAll: () => void;
+  onReplaceCurrent: () => void;
+  onReplacementChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onToggleReplace: () => void;
+  queryInputRef: RefObject<HTMLInputElement>;
+  replaceInputRef: RefObject<HTMLInputElement>;
+}
+
+const SearchPanel = memo(function SearchPanel({
+  caseSensitive,
+  currentMatchLabel,
+  open,
+  query,
+  replaceVisible,
+  replacement,
+  onCaseSensitiveChange,
+  onClose,
+  onNext,
+  onPrevious,
+  onQueryChange,
+  onReplaceAll,
+  onReplaceCurrent,
+  onReplacementChange,
+  onToggleReplace,
+  queryInputRef,
+  replaceInputRef,
+}: SearchPanelProps) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="search-panel" role="dialog" aria-label="查找和替换">
+      <div className="search-panel__row">
+        <input
+          ref={queryInputRef}
+          className="search-panel__input"
+          onChange={onQueryChange}
+          placeholder="查找文本、公式源码、代码块内容"
+          spellCheck={false}
+          type="text"
+          value={query}
+        />
+        <button
+          className={caseSensitive ? 'search-panel__toggle is-active' : 'search-panel__toggle'}
+          onClick={onCaseSensitiveChange}
+          type="button"
+        >
+          Aa
+        </button>
+        <span className="search-panel__count">{currentMatchLabel}</span>
+        <button className="search-panel__button" onClick={onPrevious} type="button">
+          上一个
+        </button>
+        <button className="search-panel__button" onClick={onNext} type="button">
+          下一个
+        </button>
+        <button className="search-panel__button" onClick={onToggleReplace} type="button">
+          {replaceVisible ? '收起替换' : '展开替换'}
+        </button>
+        <button className="search-panel__button" onClick={onClose} type="button">
+          关闭
+        </button>
+      </div>
+      {replaceVisible ? (
+        <div className="search-panel__row">
+          <input
+            ref={replaceInputRef}
+            className="search-panel__input"
+            onChange={onReplacementChange}
+            placeholder="替换为"
+            spellCheck={false}
+            type="text"
+            value={replacement}
+          />
+          <button className="search-panel__button" onClick={onReplaceCurrent} type="button">
+            替换当前
+          </button>
+          <button className="search-panel__button" onClick={onReplaceAll} type="button">
+            全部替换
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 });
@@ -230,6 +343,8 @@ export default function EditorShell({
   onSetThemePalette,
 }: EditorShellProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const sourceTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editorHostRef = useRef<HTMLDivElement | null>(null);
   const markdownWorkerRef = useRef<Worker | null>(null);
@@ -264,7 +379,16 @@ export default function EditorShell({
   const [loadingExternalDocument, setLoadingExternalDocument] = useState(false);
   const sourceModeRef = useRef(sourceMode);
   const sourceDraftRef = useRef(sourceDraft);
+  const searchPanelOpenRef = useRef(false);
+  const searchAutoRevealSignatureRef = useRef('');
   const [outline, setOutline] = useState<OutlineItem[]>(() => extractOutline(document.markdown));
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchReplaceVisible, setSearchReplaceVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchReplacement, setSearchReplacement] = useState('');
+  const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
+  const [searchCurrentIndex, setSearchCurrentIndex] = useState(0);
+  const [visualSearchRevision, setVisualSearchRevision] = useState(0);
 
   useEffect(() => {
     documentPathRef.current = document.path;
@@ -303,6 +427,10 @@ export default function EditorShell({
     sourceDraftRef.current = sourceDraft;
   }, [sourceDraft]);
 
+  useEffect(() => {
+    searchPanelOpenRef.current = searchOpen;
+  }, [searchOpen]);
+
   const armSkipNextDocChange = useCallback(() => {
     skipNextDocChangeRef.current = true;
     if (skipNextDocChangeTimerRef.current !== null) {
@@ -314,6 +442,33 @@ export default function EditorShell({
       skipNextDocChangeTimerRef.current = null;
     }, 0);
   }, []);
+
+  const applySourceMarkdown = useCallback(
+    (markdown: string, selection?: SourceSearchMatch) => {
+      const nextStats = computeSourceStats(markdown);
+      const dirty = markdown !== document.savedMarkdown;
+      setSourceDraft(markdown);
+      setLiveStats((current) => (areStatsEqual(current, nextStats) ? current : nextStats));
+      setLiveDirty(dirty);
+      onDocumentChange(markdown, nextStats);
+      const nextOutline = extractOutline(markdown);
+      setOutline((current) => (areOutlinesEqual(current, nextOutline) ? current : nextOutline));
+      onDocumentMetaChange(dirty);
+
+      if (selection) {
+        requestAnimationFrame(() => {
+          const input = sourceTextareaRef.current;
+          if (!input) {
+            return;
+          }
+
+          input.focus();
+          input.setSelectionRange(selection.start, selection.end);
+        });
+      }
+    },
+    [document.savedMarkdown, onDocumentChange, onDocumentMetaChange],
+  );
 
   const parseMarkdownInWorker = useCallback((markdown: string) => {
     if (!markdownWorkerRef.current) {
@@ -456,6 +611,7 @@ export default function EditorShell({
       visualMarkdownRef.current = canonicalMarkdown;
       visualStatsRef.current = stats;
       lastEmittedMarkdownRef.current = canonicalMarkdown;
+      setVisualSearchRevision((current) => current + 1);
       armSkipNextDocChange();
     },
     onUpdate: ({ editor: nextEditor, transaction }) => {
@@ -477,6 +633,9 @@ export default function EditorShell({
           lastEmittedMarkdownRef.current = canonicalMarkdown;
         }
         setLiveDirty(false);
+        if (searchPanelOpenRef.current) {
+          setVisualSearchRevision((current) => current + 1);
+        }
         return;
       }
 
@@ -528,6 +687,10 @@ export default function EditorShell({
         lastEmittedMarkdownRef.current = markdown;
         pendingVisualDocumentSyncRef.current = null;
       }, VISUAL_DOCUMENT_SYNC_TIMEOUT_MS);
+
+      if (searchPanelOpenRef.current) {
+        setVisualSearchRevision((current) => current + 1);
+      }
     },
   }, []);
 
@@ -618,6 +781,7 @@ export default function EditorShell({
           setOutline((current) => (areOutlinesEqual(current, nextOutline) ? current : nextOutline));
           setLiveStats((current) => (areStatsEqual(current, stats) ? current : stats));
           setLiveDirty(document.dirty);
+          setVisualSearchRevision((current) => current + 1);
         })
         .catch(() => {
           if (latestExternalLoadRef.current !== loadId || !editor) {
@@ -635,6 +799,7 @@ export default function EditorShell({
           setOutline((current) => (current.length === 0 ? current : []));
           setLiveStats((current) => (areStatsEqual(current, emptyStats) ? current : emptyStats));
           setLiveDirty(document.dirty);
+          setVisualSearchRevision((current) => current + 1);
         })
         .finally(() => {
           if (latestExternalLoadRef.current === loadId) {
@@ -665,6 +830,7 @@ export default function EditorShell({
         setOutline((current) => (areOutlinesEqual(current, result.outline) ? current : result.outline));
         setLiveStats((current) => (areStatsEqual(current, stats) ? current : stats));
         setLiveDirty(document.dirty);
+        setVisualSearchRevision((current) => current + 1);
       })
       .catch(async () => {
         if (latestExternalLoadRef.current !== loadId || !editor) {
@@ -691,6 +857,7 @@ export default function EditorShell({
           setOutline((current) => (areOutlinesEqual(current, nextOutline) ? current : nextOutline));
           setLiveStats((current) => (areStatsEqual(current, stats) ? current : stats));
           setLiveDirty(document.dirty);
+          setVisualSearchRevision((current) => current + 1);
           return;
         } catch {
           if (latestExternalLoadRef.current !== loadId || !editor) {
@@ -708,6 +875,7 @@ export default function EditorShell({
           setOutline((current) => (current.length === 0 ? current : []));
           setLiveStats((current) => (areStatsEqual(current, emptyStats) ? current : emptyStats));
           setLiveDirty(document.dirty);
+          setVisualSearchRevision((current) => current + 1);
         }
       })
       .finally(() => {
@@ -736,9 +904,293 @@ export default function EditorShell({
     });
   }, [document.markdown, sourceMode]);
 
+  const searchMatches = useMemo<Array<SourceSearchMatch | VisualSearchMatch>>(() => {
+    if (!searchOpen || !searchQuery) {
+      return [];
+    }
+
+    if (sourceMode) {
+      return findSourceSearchMatches(sourceDraft, searchQuery, {
+        caseSensitive: searchCaseSensitive,
+      });
+    }
+
+    if (!editor) {
+      return [];
+    }
+
+    return findVisualSearchMatches(editor, searchQuery, {
+      caseSensitive: searchCaseSensitive,
+    });
+  }, [
+    editor,
+    searchCaseSensitive,
+    searchOpen,
+    searchQuery,
+    sourceDraft,
+    sourceMode,
+    visualSearchRevision,
+  ]);
+
+  const revealSourceMatch = useCallback((match: SourceSearchMatch) => {
+    requestAnimationFrame(() => {
+      const input = sourceTextareaRef.current;
+      if (!input) {
+        return;
+      }
+
+      input.focus();
+      input.setSelectionRange(match.start, match.end);
+    });
+  }, []);
+
+  const revealVisualMatch = useCallback(
+    (match: VisualSearchMatch) => {
+      if (!editor) {
+        return;
+      }
+
+      selectVisualSearchMatch(editor, match);
+      if (match.kind === 'math') {
+        window.dispatchEvent(
+          new CustomEvent('markdown-editor:focus-math-search-match', {
+            detail: {
+              pos: match.pos,
+              start: match.start,
+              end: match.end,
+            },
+          }),
+        );
+      }
+    },
+    [editor],
+  );
+
+  const jumpToSearchMatch = useCallback(
+    (nextIndex: number) => {
+      if (!searchMatches.length) {
+        setSearchCurrentIndex(0);
+        return;
+      }
+
+      const normalized =
+        ((nextIndex % searchMatches.length) + searchMatches.length) % searchMatches.length;
+      setSearchCurrentIndex(normalized);
+
+      const match = searchMatches[normalized];
+      if (sourceMode) {
+        revealSourceMatch(match as SourceSearchMatch);
+        return;
+      }
+
+      revealVisualMatch(match as VisualSearchMatch);
+    },
+    [revealSourceMatch, revealVisualMatch, searchMatches, sourceMode],
+  );
+
+  const getSelectedSearchText = useCallback(() => {
+    if (sourceModeRef.current) {
+      const input = sourceTextareaRef.current;
+      if (!input) {
+        return '';
+      }
+
+      const selected = input.value.slice(input.selectionStart, input.selectionEnd).trim();
+      return selected;
+    }
+
+    if (!editor) {
+      return '';
+    }
+
+    const { from, to, empty } = editor.state.selection;
+    if (empty) {
+      return '';
+    }
+
+    return editor.state.doc.textBetween(from, to, '\n', '\n').trim();
+  }, [editor]);
+
+  const openSearchPanel = useCallback(
+    (showReplace = false) => {
+      const selectedText = getSelectedSearchText();
+      setSearchOpen(true);
+      setSearchReplaceVisible((current) => current || showReplace);
+      if (selectedText) {
+        setSearchQuery(selectedText);
+      }
+
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      });
+    },
+    [getSelectedSearchText],
+  );
+
+  const closeSearchPanel = useCallback(() => {
+    setSearchOpen(false);
+    searchAutoRevealSignatureRef.current = '';
+  }, []);
+
+  const handleReplaceCurrent = useCallback(() => {
+    if (!searchMatches.length || !searchQuery) {
+      return;
+    }
+
+    const match = searchMatches[searchCurrentIndex];
+    if (sourceMode) {
+      const result = replaceSourceSearchMatch(
+        sourceDraftRef.current,
+        match as SourceSearchMatch,
+        searchReplacement,
+      );
+      applySourceMarkdown(result.markdown, result.selection);
+      return;
+    }
+
+    if (!editor) {
+      return;
+    }
+
+    const replaced = replaceVisualSearchMatch(editor, match as VisualSearchMatch, searchReplacement);
+    if (!replaced) {
+      return;
+    }
+
+    flushVisualSync(editor);
+    setVisualSearchRevision((current) => current + 1);
+  }, [
+    applySourceMarkdown,
+    editor,
+    searchCurrentIndex,
+    searchMatches,
+    searchQuery,
+    searchReplacement,
+    sourceMode,
+  ]);
+
+  const handleReplaceAll = useCallback(() => {
+    if (!searchQuery) {
+      return;
+    }
+
+    if (sourceMode) {
+      const result = replaceAllSourceSearchMatches(
+        sourceDraftRef.current,
+        searchQuery,
+        searchReplacement,
+        {
+          caseSensitive: searchCaseSensitive,
+        },
+      );
+
+      if (!result.count) {
+        return;
+      }
+
+      applySourceMarkdown(result.markdown, result.firstSelection ?? undefined);
+      return;
+    }
+
+    if (!editor) {
+      return;
+    }
+
+    const replacedCount = replaceAllVisualSearchMatches(editor, searchQuery, searchReplacement, {
+      caseSensitive: searchCaseSensitive,
+    });
+    if (!replacedCount) {
+      return;
+    }
+
+    flushVisualSync(editor);
+    setVisualSearchRevision((current) => current + 1);
+  }, [
+    applySourceMarkdown,
+    editor,
+    searchCaseSensitive,
+    searchQuery,
+    searchReplacement,
+    sourceMode,
+  ]);
+
+  useEffect(() => {
+    if (!searchOpen) {
+      return;
+    }
+
+    if (!searchMatches.length) {
+      setSearchCurrentIndex(0);
+      return;
+    }
+
+    setSearchCurrentIndex((current) => Math.min(current, searchMatches.length - 1));
+  }, [searchMatches.length, searchOpen]);
+
+  useEffect(() => {
+    if (!searchOpen || !searchQuery) {
+      searchAutoRevealSignatureRef.current = '';
+      return;
+    }
+
+    const signature = `${sourceMode ? 'source' : 'visual'}:${searchCaseSensitive}:${searchQuery}`;
+    if (searchAutoRevealSignatureRef.current === signature) {
+      return;
+    }
+
+    searchAutoRevealSignatureRef.current = signature;
+    jumpToSearchMatch(0);
+  }, [jumpToSearchMatch, searchCaseSensitive, searchMatches.length, searchOpen, searchQuery, sourceMode]);
+
+  const searchPanel = (
+    <SearchPanel
+      caseSensitive={searchCaseSensitive}
+      currentMatchLabel={searchQuery ? `${searchMatches.length ? searchCurrentIndex + 1 : 0}/${searchMatches.length}` : '输入关键词'}
+      onCaseSensitiveChange={() => setSearchCaseSensitive((current) => !current)}
+      onClose={closeSearchPanel}
+      onNext={() => jumpToSearchMatch(searchCurrentIndex + 1)}
+      onPrevious={() => jumpToSearchMatch(searchCurrentIndex - 1)}
+      onQueryChange={(event) => setSearchQuery(event.target.value)}
+      onReplaceAll={handleReplaceAll}
+      onReplaceCurrent={handleReplaceCurrent}
+      onReplacementChange={(event) => setSearchReplacement(event.target.value)}
+      onToggleReplace={() => {
+        setSearchReplaceVisible((current) => !current);
+        requestAnimationFrame(() => {
+          if (searchReplaceVisible) {
+            searchInputRef.current?.focus();
+            return;
+          }
+
+          replaceInputRef.current?.focus();
+          replaceInputRef.current?.select();
+        });
+      }}
+      open={searchOpen}
+      query={searchQuery}
+      queryInputRef={searchInputRef}
+      replaceInputRef={replaceInputRef}
+      replacement={searchReplacement}
+      replaceVisible={searchReplaceVisible}
+    />
+  );
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
+
+      if ((event.ctrlKey || event.metaKey) && key === 'f') {
+        event.preventDefault();
+        openSearchPanel(false);
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && key === 'h') {
+        event.preventDefault();
+        openSearchPanel(true);
+        return;
+      }
 
       if ((event.ctrlKey || event.metaKey) && key === 's') {
         event.preventDefault();
@@ -769,6 +1221,17 @@ export default function EditorShell({
         return;
       }
 
+      if (
+        event.key === 'Escape' &&
+        searchOpen &&
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement.closest('.search-panel')
+      ) {
+        event.preventDefault();
+        closeSearchPanel();
+        return;
+      }
+
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === 'b') {
         event.preventDefault();
         setToolbarVisible((current) => !current);
@@ -783,7 +1246,7 @@ export default function EditorShell({
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onSaveDocument, onSaveDocumentAs]);
+  }, [closeSearchPanel, onSaveDocument, onSaveDocumentAs, openSearchPanel, searchOpen]);
 
   useEffect(() => {
     return window.markdownEditor.onRequestSaveBeforeClose(() => {
@@ -873,18 +1336,9 @@ export default function EditorShell({
 
   const handleSourceChange = useCallback(
     (event: ChangeEvent<HTMLTextAreaElement>) => {
-      const markdown = event.target.value;
-      const nextStats = computeSourceStats(markdown);
-      setSourceDraft(markdown);
-      lastEmittedMarkdownRef.current = markdown;
-      setLiveStats((current) => (areStatsEqual(current, nextStats) ? current : nextStats));
-      setLiveDirty(markdown !== document.savedMarkdown);
-      onDocumentChange(markdown, nextStats);
-      const nextOutline = extractOutline(markdown);
-      setOutline((current) => (areOutlinesEqual(current, nextOutline) ? current : nextOutline));
-      onDocumentMetaChange(markdown !== document.savedMarkdown);
+      applySourceMarkdown(event.target.value);
     },
-    [document.savedMarkdown, onDocumentChange, onDocumentMetaChange],
+    [applySourceMarkdown],
   );
 
   const handleToolbarSave = useCallback(() => {
@@ -949,8 +1403,10 @@ export default function EditorShell({
         onNewWindow={onCreateDocument}
         onOpen={onOpenDocument}
         onOpenFolder={onOpenFolder}
+        onOpenSearch={openSearchPanel}
         onSave={handleToolbarSave}
         onSaveAs={handleToolbarSaveAs}
+        searchVisible={searchOpen}
         onToggleSidebar={handleToggleSidebar}
         onToggleSourceMode={handleToggleSourceMode}
         onToggleToolbar={handleToggleToolbar}
@@ -983,6 +1439,7 @@ export default function EditorShell({
           loading={loadingExternalDocument}
           onFrameMouseDown={handleFrameMouseDown}
           onSourceChange={handleSourceChange}
+          searchPanel={searchPanel}
           sourceDraft={sourceDraft}
           sourceMode={sourceMode}
           sourceTextareaRef={sourceTextareaRef}
@@ -1019,17 +1476,10 @@ export default function EditorShell({
             const start = input?.selectionStart ?? currentValue.length;
             const end = input?.selectionEnd ?? currentValue.length;
             const markdown = `${currentValue.slice(0, start)}${insertion}${currentValue.slice(end)}`;
-            setSourceDraft(markdown);
-            lastEmittedMarkdownRef.current = markdown;
-            setLiveStats((current) => {
-              const nextStats = computeSourceStats(markdown);
-              return areStatsEqual(current, nextStats) ? current : nextStats;
+            applySourceMarkdown(markdown, {
+              start: start + insertion.length,
+              end: start + insertion.length,
             });
-            setLiveDirty(markdown !== document.savedMarkdown);
-            onDocumentChange(markdown, computeSourceStats(markdown));
-            const nextOutline = extractOutline(markdown);
-            setOutline((current) => (areOutlinesEqual(current, nextOutline) ? current : nextOutline));
-            onDocumentMetaChange(markdown !== document.savedMarkdown);
             event.target.value = '';
             return;
           }
@@ -1038,7 +1488,7 @@ export default function EditorShell({
             return;
           }
 
-          editor.chain().focus().setImage({ src: saved.markdownPath, alt: '', title: null }).run();
+          editor.chain().focus().setImage({ src: saved.markdownPath, alt: '', title: undefined }).run();
           event.target.value = '';
         }}
         ref={fileInputRef}

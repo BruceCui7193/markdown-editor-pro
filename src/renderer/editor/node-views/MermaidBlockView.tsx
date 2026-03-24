@@ -66,7 +66,7 @@ function MermaidBlockView({ node, selected, updateAttributes }: NodeViewProps) {
   return (
     <NodeViewWrapper
       className={`mermaid-node ${selected ? 'is-selected' : ''} ${editing ? 'is-editing' : ''}`}
-      onClick={(event) => {
+      onClick={(event: any) => {
         if (!editing && !(event.target as HTMLElement).closest('.mermaid-node__editor')) {
           setEditing(true);
         }

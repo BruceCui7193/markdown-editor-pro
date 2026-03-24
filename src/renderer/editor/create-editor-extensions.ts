@@ -1,5 +1,5 @@
 import { createLowlight } from 'lowlight';
-import type { Extension } from '@tiptap/core';
+import type { AnyExtension } from '@tiptap/core';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Link from '@tiptap/extension-link';
 import Table from '@tiptap/extension-table';
@@ -81,7 +81,7 @@ interface CreateEditorExtensionsOptions {
 export function createEditorExtensions({
   onUploadImage,
   onResolveImageSource,
-}: CreateEditorExtensionsOptions): Extension[] {
+}: CreateEditorExtensionsOptions): AnyExtension[] {
   return [
     StarterKit.configure({
       codeBlock: false,

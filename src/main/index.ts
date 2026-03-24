@@ -571,7 +571,7 @@ async function captureExportSnapshot(window: BrowserWindow): Promise<ExportSnaps
     return null;
   }
 
-  return window.webContents.executeJavaScript<ExportSnapshot | null>(`
+  return window.webContents.executeJavaScript(`
     (() => {
       const surface = document.querySelector('.editor-surface');
       const source = document.querySelector('.editor-source');
@@ -740,10 +740,7 @@ async function getExportDocumentBounds(window: BrowserWindow): Promise<{
     return null;
   }
 
-  return window.webContents.executeJavaScript<{
-    width: number;
-    height: number;
-  } | null>(`
+  return window.webContents.executeJavaScript(`
     (() => {
       const element = document.querySelector('.export-page');
       if (!element) {
@@ -1017,44 +1014,44 @@ function buildMenu(): Menu {
         {
           label: '\u6253\u5f00\u6587\u4ef6...',
           accelerator: 'CmdOrCtrl+O',
-          click: (_item, browserWindow) => {
-            void openDocumentPickerInNewWindow(browserWindow ?? undefined);
+          click: (_item, browserWindow: any) => {
+            void openDocumentPickerInNewWindow(browserWindow as any);
           },
         },
         {
           label: '\u6253\u5f00\u6587\u4ef6\u5939...',
           accelerator: 'CmdOrCtrl+Shift+O',
-          click: (_item, browserWindow) => {
-            void openFolderPickerInNewWindow(browserWindow ?? undefined);
+          click: (_item, browserWindow: any) => {
+            void openFolderPickerInNewWindow(browserWindow as any);
           },
         },
         { type: 'separator' },
         {
           label: '\u4fdd\u5b58',
           accelerator: 'CmdOrCtrl+S',
-          click: (_item, browserWindow) => sendMenuAction('save-document', browserWindow),
+          click: (_item, browserWindow: any) => sendMenuAction('save-document', browserWindow),
         },
         {
           label: '\u53e6\u5b58\u4e3a...',
           accelerator: 'CmdOrCtrl+Shift+S',
-          click: (_item, browserWindow) => sendMenuAction('save-document-as', browserWindow),
+          click: (_item, browserWindow: any) => sendMenuAction('save-document-as', browserWindow),
         },
         { type: 'separator' },
         {
           label: '\u5bfc\u51fa PDF...',
-          click: (_item, browserWindow) => {
+          click: (_item, browserWindow: any) => {
             const targetWindow = browserWindow ?? getFocusedOrLastWindow();
             if (targetWindow) {
-              void exportWindowAsPdf(targetWindow);
+              void exportWindowAsPdf(targetWindow as any);
             }
           },
         },
         {
           label: '\u5bfc\u51fa\u56fe\u7247...',
-          click: (_item, browserWindow) => {
+          click: (_item, browserWindow: any) => {
             const targetWindow = browserWindow ?? getFocusedOrLastWindow();
             if (targetWindow) {
-              void exportWindowAsImage(targetWindow);
+              void exportWindowAsImage(targetWindow as any);
             }
           },
         },
@@ -1080,22 +1077,22 @@ function buildMenu(): Menu {
         {
           label: '\u663e\u793a/\u9690\u85cf\u5de5\u5177\u680f',
           accelerator: 'CmdOrCtrl+Shift+B',
-          click: (_item, browserWindow) => sendMenuAction('toggle-toolbar', browserWindow),
+          click: (_item, browserWindow: any) => sendMenuAction('toggle-toolbar', browserWindow),
         },
         {
           label: '\u663e\u793a/\u9690\u85cf\u4fa7\u680f',
           accelerator: 'CmdOrCtrl+\\',
-          click: (_item, browserWindow) => sendMenuAction('toggle-sidebar', browserWindow),
+          click: (_item, browserWindow: any) => sendMenuAction('toggle-sidebar', browserWindow),
         },
         {
           label: '\u5207\u6362\u6e90\u7801\u6a21\u5f0f',
           accelerator: 'CmdOrCtrl+Shift+E',
-          click: (_item, browserWindow) => sendMenuAction('toggle-source-mode', browserWindow),
+          click: (_item, browserWindow: any) => sendMenuAction('toggle-source-mode', browserWindow),
         },
         {
           label: '\u5207\u6362\u4e3b\u9898',
           accelerator: 'CmdOrCtrl+Shift+L',
-          click: (_item, browserWindow) => sendMenuAction('toggle-theme', browserWindow),
+          click: (_item, browserWindow: any) => sendMenuAction('toggle-theme', browserWindow),
         },
         { type: 'separator' },
         { role: 'reload', label: '\u91cd\u65b0\u52a0\u8f7d' },
@@ -1128,7 +1125,7 @@ async function openDocumentInWindow(window: BrowserWindow, filePath: string): Pr
 }
 
 async function openDocumentPicker(parentWindow?: BrowserWindow): Promise<string | null> {
-  const result = await dialog.showOpenDialog(parentWindow, {
+  const result = await dialog.showOpenDialog(parentWindow as any, {
     title: '\u6253\u5f00 Markdown \u6587\u6863',
     properties: ['openFile'],
     filters: DIALOG_MARKDOWN_FILTERS,
@@ -1142,7 +1139,7 @@ async function openDocumentPicker(parentWindow?: BrowserWindow): Promise<string 
 }
 
 async function openFolderPicker(parentWindow?: BrowserWindow): Promise<string | null> {
-  const result = await dialog.showOpenDialog(parentWindow, {
+  const result = await dialog.showOpenDialog(parentWindow as any, {
     title: '\u6253\u5f00\u6587\u4ef6\u5939',
     properties: ['openDirectory'],
   });
@@ -1454,7 +1451,7 @@ function registerIpcHandlers(): void {
     const parentWindow = getWindowFromSender(event.sender);
 
     if (!payload.currentPath) {
-      const saveResult = await dialog.showSaveDialog(parentWindow ?? undefined, {
+      const saveResult = await dialog.showSaveDialog(parentWindow as any, {
         title: '\u4fdd\u5b58 Markdown \u6587\u6863',
         defaultPath: extractSuggestedDocumentName(payload.markdown),
         filters: DIALOG_MARKDOWN_FILTERS,
@@ -1477,7 +1474,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('document:save-as', async (event, payload: SaveDocumentPayload) => {
     const parentWindow = getWindowFromSender(event.sender);
     const defaultPath = payload.currentPath ?? extractSuggestedDocumentName(payload.markdown);
-    const saveResult = await dialog.showSaveDialog(parentWindow ?? undefined, {
+    const saveResult = await dialog.showSaveDialog(parentWindow as any, {
       title: 'Markdown \u6587\u6863\u53e6\u5b58\u4e3a',
       defaultPath,
       filters: DIALOG_MARKDOWN_FILTERS,

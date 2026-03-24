@@ -7,6 +7,7 @@ type IconName =
   | 'folder'
   | 'save'
   | 'saveAs'
+  | 'search'
   | 'sidebar'
   | 'heading1'
   | 'heading2'
@@ -94,6 +95,18 @@ const iconPaths: Record<IconName, ReactElement> = {
         strokeWidth="1.8"
       />
       <path d="M12 12h6M15 9v6" fill="none" stroke="currentColor" strokeWidth="1.8" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M15.2 15.2L19 19"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
     </>
   ),
   heading1: (

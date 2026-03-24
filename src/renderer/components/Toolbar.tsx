@@ -9,11 +9,13 @@ interface ToolbarProps {
   editor: Editor | null;
   theme: ThemeMode;
   themePalette: ThemePalette;
+  searchVisible: boolean;
   sourceMode: boolean;
   toolbarVisible: boolean;
   sidebarVisible: boolean;
   onOpen: () => void;
   onOpenFolder: () => void;
+  onOpenSearch: (showReplace?: boolean) => void;
   onSave: () => void;
   onSaveAs: () => void;
   onNewWindow: () => void;
@@ -59,11 +61,13 @@ function Toolbar({
   editor,
   theme,
   themePalette,
+  searchVisible,
   sourceMode,
   toolbarVisible,
   sidebarVisible,
   onOpen,
   onOpenFolder,
+  onOpenSearch,
   onSave,
   onSaveAs,
   onNewWindow,
@@ -85,6 +89,7 @@ function Toolbar({
     openFolder: '\u6253\u5f00\u6587\u4ef6\u5939\uff08\u65b0\u7a97\u53e3\uff09',
     save: '\u4fdd\u5b58',
     saveAs: '\u53e6\u5b58\u4e3a',
+    findReplace: '\u67e5\u627e\u4e0e\u66ff\u6362',
     heading1: '\u4e00\u7ea7\u6807\u9898',
     heading2: '\u4e8c\u7ea7\u6807\u9898',
     bold: '\u52a0\u7c97',
@@ -166,6 +171,12 @@ function Toolbar({
             <ToolbarButton icon="folder" onClick={onOpenFolder} title={labels.openFolder} />
             <ToolbarButton icon="save" onClick={onSave} title={labels.save} />
             <ToolbarButton icon="saveAs" onClick={onSaveAs} title={labels.saveAs} />
+            <ToolbarButton
+              active={searchVisible}
+              icon="search"
+              onClick={() => onOpenSearch(true)}
+              title={labels.findReplace}
+            />
 
             <div className="toolbar__divider" />
 
