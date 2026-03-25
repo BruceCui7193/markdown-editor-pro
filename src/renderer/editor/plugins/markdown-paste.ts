@@ -55,6 +55,10 @@ function parseContentFromMarkdown(markdown: string) {
   return content.length > 0 ? content : null;
 }
 
+function insertPlainTextFallback(text: string) {
+  return parseContentFromMarkdown(text.replace(/\r\n/g, '\n'));
+}
+
 export function createMarkdownPasteExtension() {
   return Extension.create({
     name: 'markdownPaste',
@@ -77,7 +81,9 @@ export function createMarkdownPasteExtension() {
               const hasExclusiveMarkdown = hasExclusiveMarkdownStructure(text);
 
               if (hasStructuredHtml && !hasExclusiveMarkdown) {
-                const content = parseContentFromMarkdown(convertHtmlToMarkdown(html));
+                const content =
+                  parseContentFromMarkdown(convertHtmlToMarkdown(html)) ??
+                  insertPlainTextFallback(text);
                 if (!content) {
                   return false;
                 }
@@ -99,7 +105,9 @@ export function createMarkdownPasteExtension() {
               }
 
               if (hasStructuredHtml) {
-                const content = parseContentFromMarkdown(convertHtmlToMarkdown(html));
+                const content =
+                  parseContentFromMarkdown(convertHtmlToMarkdown(html)) ??
+                  insertPlainTextFallback(text);
                 if (!content) {
                   return false;
                 }

@@ -23,6 +23,7 @@ const api: MarkdownEditorApi = {
   saveDocumentAs: (payload: SaveDocumentPayload) => ipcRenderer.invoke('document:save-as', payload),
   saveImage: (payload: SaveImagePayload) => ipcRenderer.invoke('asset:save-image', payload),
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
+  exportClipboardDebug: () => ipcRenderer.invoke('clipboard:export-debug'),
   setTheme: (theme: ThemeMode) => ipcRenderer.invoke('theme:set', theme),
   setWindowDirty: (dirty: boolean) => ipcRenderer.invoke('window:set-dirty', dirty),
   setWindowDocumentState: (state: WindowDocumentState) =>

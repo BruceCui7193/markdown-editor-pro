@@ -306,13 +306,25 @@ function extractStandaloneDisplayMath(element: HTMLElement): string | null {
   return childMath?.display ? childMath.value : null;
 }
 
-function renderInlineChildren(node: Node): string {
+interface InlineFormatContext {
+  bold: boolean;
+  italic: boolean;
+  struck: boolean;
+}
+
+const DEFAULT_INLINE_FORMAT_CONTEXT: InlineFormatContext = {
+  bold: false,
+  italic: false,
+  struck: false,
+};
+
+function renderInlineChildren(node: Node, context: InlineFormatContext = DEFAULT_INLINE_FORMAT_CONTEXT): string {
   return Array.from(node.childNodes)
-    .map((child) => renderInlineNode(child))
+    .map((child) => renderInlineNode(child, context))
     .join('');
 }
 
-function renderInlineNode(node: Node): string {
+function renderInlineNode(node: Node, context: InlineFormatContext = DEFAULT_INLINE_FORMAT_CONTEXT): string {
   if (node.nodeType === Node.TEXT_NODE) {
     return normalizeText(node.textContent ?? '');
   }
@@ -334,7 +346,7 @@ function renderInlineNode(node: Node): string {
       }
       return `\`${(node.textContent ?? '').replace(/`/g, '\\`')}\``;
     case 'a': {
-      const label = renderInlineChildren(node).trim() || (node.textContent ?? '').trim();
+      const label = renderInlineChildren(node, context).trim() || (node.textContent ?? '').trim();
       const href = node.getAttribute('href') ?? '';
       return href ? `[${label}](${href})` : label;
     }
@@ -349,7 +361,12 @@ function renderInlineNode(node: Node): string {
     case 'sub':
     case 'sup':
     default: {
-      const content = renderInlineChildren(node);
+      const nextContext: InlineFormatContext = {
+        bold: context.bold || isVisuallyBold(node),
+        italic: context.italic || isVisuallyItalic(node),
+        struck: context.struck || isVisuallyStruck(node),
+      };
+      const content = renderInlineChildren(node, nextContext);
       const trimmed = content.trim();
 
       if (!trimmed) {
@@ -357,13 +374,13 @@ function renderInlineNode(node: Node): string {
       }
 
       let result = content;
-      if (isVisuallyBold(node)) {
+      if (nextContext.bold && !context.bold) {
         result = `**${result.trim()}**`;
       }
-      if (isVisuallyItalic(node)) {
+      if (nextContext.italic && !context.italic) {
         result = `*${result.trim()}*`;
       }
-      if (isVisuallyStruck(node)) {
+      if (nextContext.struck && !context.struck) {
         result = `~~${result.trim()}~~`;
       }
 

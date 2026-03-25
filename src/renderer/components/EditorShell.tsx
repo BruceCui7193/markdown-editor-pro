@@ -1806,6 +1806,18 @@ export default function EditorShell({
         return;
       }
 
+      if ((event.ctrlKey || event.metaKey) && event.altKey && event.shiftKey && key === 'v') {
+        event.preventDefault();
+        void window.markdownEditor.exportClipboardDebug().then((exportedPath) => {
+          window.alert(
+            exportedPath
+              ? `已导出剪贴板调试信息：\n${exportedPath}`
+              : '当前剪贴板没有可导出的内容。',
+          );
+        });
+        return;
+      }
+
       if ((event.ctrlKey || event.metaKey) && key === 's') {
         event.preventDefault();
         const visualState = sourceModeRef.current ? null : flushVisualSync();
@@ -2123,4 +2135,3 @@ export default function EditorShell({
     </div>
   );
 }
-

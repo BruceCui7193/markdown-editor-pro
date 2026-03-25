@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
+  clipboard,
   Menu,
   type MenuItemConstructorOptions,
   dialog,
@@ -1438,6 +1439,44 @@ async function saveImage(payload: SaveImagePayload) {
   };
 }
 
+async function exportClipboardDebugBundle(): Promise<string | null> {
+  const formats = clipboard.availableFormats();
+  const text = clipboard.readText();
+  const html = clipboard.readHTML();
+  const rtf = clipboard.readRTF();
+
+  if (!text && !html && !rtf && formats.length === 0) {
+    return null;
+  }
+
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}Z$/, '')
+    .replace('T', '-');
+  const baseName = `clipboard-debug-${timestamp}`;
+  const desktopPath = app.getPath('desktop');
+  const jsonPath = path.join(desktopPath, `${baseName}.json`);
+  const htmlPath = path.join(desktopPath, `${baseName}.html`);
+  const textPath = path.join(desktopPath, `${baseName}.txt`);
+  const rtfPath = path.join(desktopPath, `${baseName}.rtf`);
+
+  const metadata = {
+    createdAt: new Date().toISOString(),
+    formats,
+    textLength: text.length,
+    htmlLength: html.length,
+    rtfLength: rtf.length,
+  };
+
+  await fs.writeFile(jsonPath, JSON.stringify(metadata, null, 2), 'utf8');
+  await fs.writeFile(htmlPath, html, 'utf8');
+  await fs.writeFile(textPath, text, 'utf8');
+  await fs.writeFile(rtfPath, rtf, 'utf8');
+
+  return jsonPath;
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle('window:new', async () => {
     await createMainWindow();
@@ -1554,6 +1593,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('shell:open-external', async (_event, url: string) => {
     await shell.openExternal(url);
+  });
+
+  ipcMain.handle('clipboard:export-debug', async () => {
+    return exportClipboardDebugBundle();
   });
 
   ipcMain.handle('theme:set', async (_event, theme: ThemeMode) => {

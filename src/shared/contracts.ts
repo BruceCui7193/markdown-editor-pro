@@ -74,6 +74,7 @@ export interface MarkdownEditorApi {
   saveDocumentAs: (payload: SaveDocumentPayload) => Promise<SavedDocument | null>;
   saveImage: (payload: SaveImagePayload) => Promise<SavedImage>;
   openExternal: (url: string) => Promise<void>;
+  exportClipboardDebug: () => Promise<string | null>;
   setTheme: (theme: ThemeMode) => Promise<void>;
   setWindowDirty: (dirty: boolean) => Promise<void>;
   setWindowDocumentState: (state: WindowDocumentState) => Promise<void>;
