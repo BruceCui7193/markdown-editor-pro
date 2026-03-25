@@ -56,6 +56,12 @@ export interface ExportStatus {
   message: string;
 }
 
+export interface WindowDocumentState {
+  path: string | null;
+  markdown: string;
+  dirty: boolean;
+}
+
 export interface MarkdownEditorApi {
   newWindow: () => Promise<void>;
   openDocumentDialog: () => Promise<OpenedDocument | null>;
@@ -70,6 +76,7 @@ export interface MarkdownEditorApi {
   openExternal: (url: string) => Promise<void>;
   setTheme: (theme: ThemeMode) => Promise<void>;
   setWindowDirty: (dirty: boolean) => Promise<void>;
+  setWindowDocumentState: (state: WindowDocumentState) => Promise<void>;
   respondSaveBeforeClose: (saved: boolean) => void;
   onDocumentOpened: (callback: (document: OpenedDocument) => void) => () => void;
   onFolderOpened: (callback: (folder: OpenedFolder) => void) => () => void;

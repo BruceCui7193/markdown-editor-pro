@@ -134,6 +134,14 @@ export default function App() {
     void window.markdownEditor.setWindowDirty(editorDocument.dirty);
   }, [editorDocument.dirty]);
 
+  useEffect(() => {
+    void window.markdownEditor.setWindowDocumentState({
+      path: editorDocument.path,
+      markdown: editorDocument.markdown,
+      dirty: editorDocument.dirty,
+    });
+  }, [editorDocument.dirty, editorDocument.markdown, editorDocument.path]);
+
   const refreshFolderForDocument = useCallback(async (filePath: string | null): Promise<void> => {
     const folderPath = getDirectoryPath(filePath);
     if (!folderPath) {

@@ -22,6 +22,7 @@ import type {
   SaveImagePayload,
   SavedDocument,
   ThemeMode,
+  WindowDocumentState,
 } from '@shared/contracts';
 
 const APP_NAME = 'Markdown Editor Pro';
@@ -257,6 +258,7 @@ const EXPORT_PAGE_CSS = `
 const windows = new Set<BrowserWindow>();
 const pendingFilesOnLaunch: string[] = [];
 const dirtyWindows = new WeakMap<BrowserWindow, boolean>();
+const windowDocumentStates = new WeakMap<BrowserWindow, WindowDocumentState>();
 const closeAllowedWindows = new WeakSet<BrowserWindow>();
 const closePromptWindows = new WeakSet<BrowserWindow>();
 const pendingCloseSaves = new Map<number, (saved: boolean) => void>();
@@ -284,6 +286,12 @@ const DEFAULT_WINDOW_STATE: PersistedWindowState = {
   width: 1380,
   height: 920,
   isMaximized: false,
+};
+
+const EMPTY_WINDOW_DOCUMENT_STATE: WindowDocumentState = {
+  path: null,
+  markdown: '',
+  dirty: false,
 };
 
 async function readFolderEntries(folderPath: string): Promise<FolderEntry[]> {
@@ -424,6 +432,36 @@ function markWindowDirty(window: BrowserWindow | null, dirty: boolean): void {
 
   dirtyWindows.set(window, dirty);
   window.setDocumentEdited(dirty);
+}
+
+function markWindowDocumentState(window: BrowserWindow | null, state: WindowDocumentState): void {
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+
+  windowDocumentStates.set(window, state);
+}
+
+function getWindowDocumentState(window: BrowserWindow | null): WindowDocumentState {
+  if (!window || window.isDestroyed()) {
+    return EMPTY_WINDOW_DOCUMENT_STATE;
+  }
+
+  return windowDocumentStates.get(window) ?? EMPTY_WINDOW_DOCUMENT_STATE;
+}
+
+function canReuseWindowForDocumentOpen(window: BrowserWindow | null): boolean {
+  if (!window || window.isDestroyed()) {
+    return false;
+  }
+
+  const state = getWindowDocumentState(window);
+  return state.path === null && !state.dirty && state.markdown.trim().length === 0;
+}
+
+function getReusableDocumentWindow(preferredWindow?: BrowserWindow | null): BrowserWindow | null {
+  const candidate = preferredWindow ?? getFocusedOrLastWindow();
+  return canReuseWindowForDocumentOpen(candidate) ? candidate : null;
 }
 
 function requestRendererSaveBeforeClose(window: BrowserWindow): Promise<boolean> {
@@ -1121,7 +1159,31 @@ async function openDocumentInWindow(window: BrowserWindow, filePath: string): Pr
 
   const document = await readDocument(filePath);
   updateWindowTitle(window, document.title);
+  markWindowDirty(window, false);
+  markWindowDocumentState(window, {
+    path: document.path,
+    markdown: document.markdown,
+    dirty: false,
+  });
   window.webContents.send('document:opened', document);
+}
+
+async function openDocumentInPreferredWindow(
+  filePath: string,
+  preferredWindow?: BrowserWindow | null,
+): Promise<boolean> {
+  const reusableWindow = getReusableDocumentWindow(preferredWindow);
+  if (reusableWindow) {
+    await openDocumentInWindow(reusableWindow, filePath);
+    if (reusableWindow.isMinimized()) {
+      reusableWindow.restore();
+    }
+    reusableWindow.focus();
+    return false;
+  }
+
+  await createMainWindow({ filePath });
+  return true;
 }
 
 async function openDocumentPicker(parentWindow?: BrowserWindow): Promise<string | null> {
@@ -1157,8 +1219,7 @@ async function openDocumentPickerInNewWindow(parentWindow?: BrowserWindow): Prom
     return false;
   }
 
-  await createMainWindow({ filePath });
-  return true;
+  return openDocumentInPreferredWindow(filePath, parentWindow ?? null);
 }
 
 async function openFolderPickerInNewWindow(parentWindow?: BrowserWindow): Promise<boolean> {
@@ -1215,6 +1276,7 @@ async function createMainWindow(options: WindowInitOptions = {}): Promise<Browse
 
   windows.add(windowInstance);
   dirtyWindows.set(windowInstance, false);
+  windowDocumentStates.set(windowInstance, EMPTY_WINDOW_DOCUMENT_STATE);
   updateWindowTitle(windowInstance);
 
   windowInstance.on('ready-to-show', () => {
@@ -1311,19 +1373,11 @@ function ensureSingleInstance(): void {
     const filePath = getInitialFilePath(argv);
 
     if (filePath) {
-      void createMainWindow({ filePath });
+      void openDocumentInPreferredWindow(filePath);
       return;
     }
 
-    const targetWindow = getFocusedOrLastWindow();
-    if (targetWindow) {
-      if (targetWindow.isMinimized()) {
-        targetWindow.restore();
-      }
-      targetWindow.focus();
-    } else {
-      void createMainWindow();
-    }
+    void createMainWindow();
   });
 }
 
@@ -1340,7 +1394,7 @@ function registerFileOpenHandlers(): void {
       return;
     }
 
-    void createMainWindow({ filePath });
+    void openDocumentInPreferredWindow(filePath);
   });
 }
 
@@ -1392,6 +1446,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle('window:set-dirty', async (event, dirty: boolean) => {
     const parentWindow = getWindowFromSender(event.sender);
     markWindowDirty(parentWindow, dirty);
+  });
+
+  ipcMain.handle('window:set-document-state', async (event, state: WindowDocumentState) => {
+    const parentWindow = getWindowFromSender(event.sender);
+    markWindowDocumentState(parentWindow, state);
   });
 
   ipcMain.on('window:save-before-close-result', (event, saved: boolean) => {

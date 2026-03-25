@@ -9,8 +9,8 @@
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build && electron-builder",
-    "build:dir": "electron-vite build && electron-builder --dir",
+    "build": "electron-vite build && electron-builder --config electron-builder.config.mjs",
+    "build:dir": "electron-vite build && electron-builder --dir --config electron-builder.config.mjs",
     "preview": "electron-vite preview"
   },
   "dependencies": {

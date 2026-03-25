@@ -8,6 +8,7 @@ import type {
   SaveDocumentPayload,
   SaveImagePayload,
   ThemeMode,
+  WindowDocumentState,
 } from '@shared/contracts';
 
 const api: MarkdownEditorApi = {
@@ -24,6 +25,8 @@ const api: MarkdownEditorApi = {
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
   setTheme: (theme: ThemeMode) => ipcRenderer.invoke('theme:set', theme),
   setWindowDirty: (dirty: boolean) => ipcRenderer.invoke('window:set-dirty', dirty),
+  setWindowDocumentState: (state: WindowDocumentState) =>
+    ipcRenderer.invoke('window:set-document-state', state),
   respondSaveBeforeClose: (saved: boolean) => {
     ipcRenderer.send('window:save-before-close-result', saved);
   },
