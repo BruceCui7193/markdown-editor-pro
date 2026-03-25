@@ -183,10 +183,22 @@
   flex-wrap: nowrap;
   overflow-x: auto;
   scrollbar-width: none;
+  transition: row-gap 220ms ease;
 }
 
 .toolbar__row::-webkit-scrollbar {
   display: none;
+}
+
+.toolbar__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.toolbar__group--format {
+  min-width: 0;
 }
 
 .toolbar__divider {
@@ -270,6 +282,7 @@
   width: 17px;
   height: 17px;
   overflow: visible;
+  transition: width 180ms ease, height 180ms ease;
 }
 
 .theme-panel {
@@ -1055,6 +1068,46 @@
 }
 
 @media (max-width: 980px) {
+  .toolbar {
+    padding: 8px 10px;
+  }
+
+  .toolbar__row {
+    overflow-x: hidden;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    row-gap: 8px;
+  }
+
+  .toolbar__divider {
+    display: none;
+  }
+
+  .toolbar__group {
+    flex-wrap: wrap;
+  }
+
+  .toolbar__group--file,
+  .toolbar__group--format {
+    flex: 1 1 100%;
+  }
+
+  .toolbar__group--mode {
+    flex: 0 0 auto;
+  }
+
+  .toolbar-button,
+  .toolbar-reveal {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+  }
+
+  .toolbar-button__icon {
+    width: 16px;
+    height: 16px;
+  }
+
   .workspace--with-sidebar {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1065,6 +1118,19 @@
 }
 
 @media (max-width: 760px) {
+  .toolbar-button,
+  .toolbar-reveal {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  .toolbar-button__icon {
+    width: 15px;
+    height: 15px;
+  }
+
   .toolbar,
   .workspace,
   .status-bar {

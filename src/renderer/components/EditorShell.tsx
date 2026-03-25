@@ -6,6 +6,7 @@
   useRef,
   useState,
   type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type RefObject,
   type SyntheticEvent,
@@ -233,6 +234,26 @@ const VISUAL_META_SYNC_DELAY_MS = 260;
 const VISUAL_DOCUMENT_SYNC_TIMEOUT_MS = 1400;
 const SELECTION_START_MARKER = 'MDEDITORSELECTIONSTARTTOKEN';
 const SELECTION_END_MARKER = 'MDEDITORSELECTIONENDTOKEN';
+const SEARCH_QUERY_PREFILL_MAX_CHARS = 240;
+const SEARCH_QUERY_PREFILL_MAX_NEWLINES = 2;
+
+function normalizeSearchSeedText(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  if (trimmed.length > SEARCH_QUERY_PREFILL_MAX_CHARS) {
+    return '';
+  }
+
+  const lineBreakCount = (trimmed.match(/\n/g) ?? []).length;
+  if (lineBreakCount > SEARCH_QUERY_PREFILL_MAX_NEWLINES) {
+    return '';
+  }
+
+  return trimmed;
+}
 
 interface EditorViewportProps {
   editor: TiptapEditor | null;
@@ -330,6 +351,21 @@ const SearchPanel = memo(function SearchPanel({
     return null;
   }
 
+  const handleInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.shiftKey) {
+      onPrevious();
+      return;
+    }
+
+    onNext();
+  };
+
   return (
     <div className="search-panel" role="dialog" aria-label="查找和替换">
       <div className="search-panel__row">
@@ -337,6 +373,7 @@ const SearchPanel = memo(function SearchPanel({
           ref={queryInputRef}
           className="search-panel__input"
           onChange={onQueryChange}
+          onKeyDown={handleInputKeyDown}
           placeholder="查找文本、公式源码、代码块内容"
           spellCheck={false}
           type="text"
@@ -369,6 +406,7 @@ const SearchPanel = memo(function SearchPanel({
             ref={replaceInputRef}
             className="search-panel__input"
             onChange={onReplacementChange}
+            onKeyDown={handleInputKeyDown}
             placeholder="替换为"
             spellCheck={false}
             type="text"
@@ -428,9 +466,10 @@ export default function EditorShell({
   const pendingModeSwitchScrollRatioRef = useRef<number | null>(null);
   const pendingSourceSelectionRef = useRef<SourceSearchMatch | null>(null);
   const pendingVisualSelectionRestoreRef = useRef(false);
+  const startupCaretPlacedRef = useRef(false);
   const sourceSelectionRef = useRef<SourceSearchMatch>({
-    start: document.markdown.length,
-    end: document.markdown.length,
+    start: 0,
+    end: 0,
   });
   const sourcePreviewCacheRef = useRef<{
     markdown: string;
@@ -439,7 +478,6 @@ export default function EditorShell({
   } | null>(null);
   const sourcePreviewTimerRef = useRef<number | null>(null);
   const sourcePreviewRequestRef = useRef(0);
-  const blankDocumentAutofocusDoneRef = useRef(false);
   const [toolbarVisible, setToolbarVisible] = useState(() => {
     return window.localStorage.getItem('markdown-editor-toolbar') !== 'hidden';
   });
@@ -580,7 +618,6 @@ export default function EditorShell({
           from: number;
           to: number;
           text: string;
-          marks: JSONContent['marks'];
           startPos?: number;
           endPos?: number;
         }
@@ -604,7 +641,6 @@ export default function EditorShell({
           text: node.text
             .replace(SELECTION_START_MARKER, '')
             .replace(SELECTION_END_MARKER, ''),
-          marks: node.marks as JSONContent['marks'],
           startPos: startIndex === -1 ? undefined : pos + startIndex,
           endPos:
             endIndex === -1
@@ -1307,26 +1343,38 @@ export default function EditorShell({
   }, [editor, restoreVisualSelectionFromMarkedContent, sourceMode]);
 
   useEffect(() => {
-    if (
-      !editor ||
-      sourceMode ||
-      blankDocumentAutofocusDoneRef.current ||
-      document.path !== null ||
-      document.markdown.length > 0 ||
-      document.dirty
-    ) {
+    if (startupCaretPlacedRef.current || loadingExternalDocument) {
       return;
     }
 
     requestAnimationFrame(() => {
-      if (!editor || sourceModeRef.current) {
+      if (startupCaretPlacedRef.current) {
         return;
       }
 
-      editor.chain().focus('end').run();
-      blankDocumentAutofocusDoneRef.current = true;
+      if (sourceModeRef.current) {
+        const input = sourceTextareaRef.current;
+        if (!input) {
+          return;
+        }
+
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(0, 0);
+        input.scrollTop = 0;
+        sourceSelectionRef.current = { start: 0, end: 0 };
+        startupCaretPlacedRef.current = true;
+        return;
+      }
+
+      if (!editor) {
+        return;
+      }
+
+      editor.chain().focus('start').run();
+      editorFrameRef.current?.scrollTo({ top: 0 });
+      startupCaretPlacedRef.current = true;
     });
-  }, [document.dirty, document.markdown, document.path, editor, sourceMode]);
+  }, [editor, loadingExternalDocument, sourceMode]);
 
   const searchMatches = useMemo<Array<SourceSearchMatch | VisualSearchMatch>>(() => {
     if (!searchOpen || !searchQuery) {
@@ -1404,10 +1452,9 @@ export default function EditorShell({
       const match = searchMatches[normalized];
       if (sourceMode) {
         revealSourceMatch(match as SourceSearchMatch);
-        return;
+      } else {
+        revealVisualMatch(match as VisualSearchMatch);
       }
-
-      revealVisualMatch(match as VisualSearchMatch);
     },
     [revealSourceMatch, revealVisualMatch, searchMatches, sourceMode],
   );
@@ -1419,8 +1466,8 @@ export default function EditorShell({
         return '';
       }
 
-      const selected = input.value.slice(input.selectionStart, input.selectionEnd).trim();
-      return selected;
+      const selected = input.value.slice(input.selectionStart, input.selectionEnd);
+      return normalizeSearchSeedText(selected);
     }
 
     if (!editor) {
@@ -1432,7 +1479,7 @@ export default function EditorShell({
       return '';
     }
 
-    return editor.state.doc.textBetween(from, to, '\n', '\n').trim();
+    return normalizeSearchSeedText(editor.state.doc.textBetween(from, to, '\n', '\n'));
   }, [editor]);
 
   const openSearchPanel = useCallback(
@@ -1688,6 +1735,29 @@ export default function EditorShell({
     const handler = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
 
+      const activeElement = window.document.activeElement;
+      const activeInSearchPanel =
+        activeElement instanceof HTMLElement &&
+        Boolean(activeElement.closest('.search-panel'));
+      const activeInEditorSurface =
+        activeElement instanceof HTMLElement &&
+        (Boolean(activeElement.closest('.ProseMirror')) ||
+          Boolean(activeElement.closest('.editor-source')));
+
+      if (
+        searchOpen &&
+        event.key === 'Enter' &&
+        (activeInSearchPanel || activeInEditorSurface) &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        jumpToSearchMatch(searchCurrentIndex + (event.shiftKey ? -1 : 1));
+        return;
+      }
+
       if ((event.ctrlKey || event.metaKey) && key === 'f') {
         event.preventDefault();
         openSearchPanel(false);
@@ -1726,8 +1796,7 @@ export default function EditorShell({
       if (
         event.key === 'Escape' &&
         searchOpen &&
-        document.activeElement instanceof HTMLElement &&
-        document.activeElement.closest('.search-panel')
+        activeInSearchPanel
       ) {
         event.preventDefault();
         closeSearchPanel();
@@ -1746,13 +1815,15 @@ export default function EditorShell({
       }
     };
 
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
   }, [
     closeSearchPanel,
+    jumpToSearchMatch,
     onSaveDocument,
     onSaveDocumentAs,
     openSearchPanel,
+    searchCurrentIndex,
     searchOpen,
     toggleSourceModePreservingViewport,
   ]);

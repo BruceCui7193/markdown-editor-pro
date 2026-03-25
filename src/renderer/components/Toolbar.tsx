@@ -159,200 +159,206 @@ function Toolbar({
       {toolbarVisible ? (
         <header className="toolbar" ref={toolbarRef}>
           <div className="toolbar__row">
-            <ToolbarButton icon="menu" onClick={onToggleToolbar} title={labels.hideToolbar} />
-            <ToolbarButton
-              active={sidebarVisible}
-              icon="sidebar"
-              onClick={onToggleSidebar}
-              title={sidebarVisible ? labels.hideSidebar : labels.showSidebar}
-            />
-            <ToolbarButton icon="newWindow" onClick={onNewWindow} title={labels.newWindow} />
-            <ToolbarButton icon="open" onClick={onOpen} title={labels.openFile} />
-            <ToolbarButton icon="folder" onClick={onOpenFolder} title={labels.openFolder} />
-            <ToolbarButton icon="save" onClick={onSave} title={labels.save} />
-            <ToolbarButton icon="saveAs" onClick={onSaveAs} title={labels.saveAs} />
-            <ToolbarButton
-              active={searchVisible}
-              icon="search"
-              onClick={() => onOpenSearch(true)}
-              title={labels.findReplace}
-            />
+            <div className="toolbar__group toolbar__group--file">
+              <ToolbarButton icon="menu" onClick={onToggleToolbar} title={labels.hideToolbar} />
+              <ToolbarButton
+                active={sidebarVisible}
+                icon="sidebar"
+                onClick={onToggleSidebar}
+                title={sidebarVisible ? labels.hideSidebar : labels.showSidebar}
+              />
+              <ToolbarButton icon="newWindow" onClick={onNewWindow} title={labels.newWindow} />
+              <ToolbarButton icon="open" onClick={onOpen} title={labels.openFile} />
+              <ToolbarButton icon="folder" onClick={onOpenFolder} title={labels.openFolder} />
+              <ToolbarButton icon="save" onClick={onSave} title={labels.save} />
+              <ToolbarButton icon="saveAs" onClick={onSaveAs} title={labels.saveAs} />
+              <ToolbarButton
+                active={searchVisible}
+                icon="search"
+                onClick={() => onOpenSearch(true)}
+                title={labels.findReplace}
+              />
+            </div>
 
             <div className="toolbar__divider" />
 
-            <ToolbarButton
-              active={editor?.isActive('heading', { level: 1 })}
-              disabled={!editor || sourceMode}
-              icon="heading1"
-              onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}
-              title={labels.heading1}
-            />
-            <ToolbarButton
-              active={editor?.isActive('heading', { level: 2 })}
-              disabled={!editor || sourceMode}
-              icon="heading2"
-              onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
-              title={labels.heading2}
-            />
-            <ToolbarButton
-              active={editor?.isActive('bold')}
-              disabled={!editor || sourceMode}
-              icon="bold"
-              onClick={() => editor?.chain().focus().toggleBold().run()}
-              title={labels.bold}
-            />
-            <ToolbarButton
-              active={editor?.isActive('italic')}
-              disabled={!editor || sourceMode}
-              icon="italic"
-              onClick={() => editor?.chain().focus().toggleItalic().run()}
-              title={labels.italic}
-            />
-            <ToolbarButton
-              active={editor?.isActive('underline')}
-              disabled={!editor || sourceMode}
-              icon="underline"
-              onClick={() => editor?.chain().focus().toggleUnderline().run()}
-              title={labels.underline}
-            />
-            <ToolbarButton
-              active={editor?.isActive('strike')}
-              disabled={!editor || sourceMode}
-              icon="strike"
-              onClick={() => editor?.chain().focus().toggleStrike().run()}
-              title={labels.strike}
-            />
-            <ToolbarButton
-              active={editor?.isActive('link')}
-              disabled={!editor || sourceMode}
-              icon="link"
-              onClick={() => {
-                if (!editor) {
-                  return;
-                }
+            <div className="toolbar__group toolbar__group--format">
+              <ToolbarButton
+                active={editor?.isActive('heading', { level: 1 })}
+                disabled={!editor || sourceMode}
+                icon="heading1"
+                onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}
+                title={labels.heading1}
+              />
+              <ToolbarButton
+                active={editor?.isActive('heading', { level: 2 })}
+                disabled={!editor || sourceMode}
+                icon="heading2"
+                onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
+                title={labels.heading2}
+              />
+              <ToolbarButton
+                active={editor?.isActive('bold')}
+                disabled={!editor || sourceMode}
+                icon="bold"
+                onClick={() => editor?.chain().focus().toggleBold().run()}
+                title={labels.bold}
+              />
+              <ToolbarButton
+                active={editor?.isActive('italic')}
+                disabled={!editor || sourceMode}
+                icon="italic"
+                onClick={() => editor?.chain().focus().toggleItalic().run()}
+                title={labels.italic}
+              />
+              <ToolbarButton
+                active={editor?.isActive('underline')}
+                disabled={!editor || sourceMode}
+                icon="underline"
+                onClick={() => editor?.chain().focus().toggleUnderline().run()}
+                title={labels.underline}
+              />
+              <ToolbarButton
+                active={editor?.isActive('strike')}
+                disabled={!editor || sourceMode}
+                icon="strike"
+                onClick={() => editor?.chain().focus().toggleStrike().run()}
+                title={labels.strike}
+              />
+              <ToolbarButton
+                active={editor?.isActive('link')}
+                disabled={!editor || sourceMode}
+                icon="link"
+                onClick={() => {
+                  if (!editor) {
+                    return;
+                  }
 
-                const previous = editor.getAttributes('link').href as string | undefined;
-                const href = window.prompt(labels.linkPrompt, previous ?? 'https://');
-                if (!href) {
-                  return;
-                }
+                  const previous = editor.getAttributes('link').href as string | undefined;
+                  const href = window.prompt(labels.linkPrompt, previous ?? 'https://');
+                  if (!href) {
+                    return;
+                  }
 
-                editor.chain().focus().extendMarkRange('link').setLink({ href }).run();
-              }}
-              title={labels.link}
-            />
-            <ToolbarButton
-              active={editor?.isActive('blockquote')}
-              disabled={!editor || sourceMode}
-              icon="quote"
-              onClick={() => editor?.chain().focus().toggleBlockquote().run()}
-              title={labels.quote}
-            />
-            <ToolbarButton
-              active={editor?.isActive('bulletList')}
-              disabled={!editor || sourceMode}
-              icon="bullet"
-              onClick={() => editor?.chain().focus().toggleBulletList().run()}
-              title={labels.bullet}
-            />
-            <ToolbarButton
-              active={editor?.isActive('orderedList')}
-              disabled={!editor || sourceMode}
-              icon="ordered"
-              onClick={() => editor?.chain().focus().toggleOrderedList().run()}
-              title={labels.ordered}
-            />
-            <ToolbarButton
-              active={editor?.isActive('taskList')}
-              disabled={!editor || sourceMode}
-              icon="task"
-              onClick={() => editor?.chain().focus().toggleTaskList().run()}
-              title={labels.task}
-            />
-            <ToolbarButton
-              disabled={!editor || sourceMode}
-              icon="table"
-              onClick={() =>
-                editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
-              }
-              title={labels.table}
-            />
-            <ToolbarButton
-              active={editor?.isActive('codeBlock')}
-              disabled={!editor || sourceMode}
-              icon="code"
-              onClick={() => editor?.chain().focus().toggleCodeBlock().run()}
-              title={labels.code}
-            />
-            <ToolbarButton
-              disabled={!editor || sourceMode}
-              icon="math"
-              onClick={() => {
-                if (!editor) {
-                  return;
+                  editor.chain().focus().extendMarkRange('link').setLink({ href }).run();
+                }}
+                title={labels.link}
+              />
+              <ToolbarButton
+                active={editor?.isActive('blockquote')}
+                disabled={!editor || sourceMode}
+                icon="quote"
+                onClick={() => editor?.chain().focus().toggleBlockquote().run()}
+                title={labels.quote}
+              />
+              <ToolbarButton
+                active={editor?.isActive('bulletList')}
+                disabled={!editor || sourceMode}
+                icon="bullet"
+                onClick={() => editor?.chain().focus().toggleBulletList().run()}
+                title={labels.bullet}
+              />
+              <ToolbarButton
+                active={editor?.isActive('orderedList')}
+                disabled={!editor || sourceMode}
+                icon="ordered"
+                onClick={() => editor?.chain().focus().toggleOrderedList().run()}
+                title={labels.ordered}
+              />
+              <ToolbarButton
+                active={editor?.isActive('taskList')}
+                disabled={!editor || sourceMode}
+                icon="task"
+                onClick={() => editor?.chain().focus().toggleTaskList().run()}
+                title={labels.task}
+              />
+              <ToolbarButton
+                disabled={!editor || sourceMode}
+                icon="table"
+                onClick={() =>
+                  editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
                 }
+                title={labels.table}
+              />
+              <ToolbarButton
+                active={editor?.isActive('codeBlock')}
+                disabled={!editor || sourceMode}
+                icon="code"
+                onClick={() => editor?.chain().focus().toggleCodeBlock().run()}
+                title={labels.code}
+              />
+              <ToolbarButton
+                disabled={!editor || sourceMode}
+                icon="math"
+                onClick={() => {
+                  if (!editor) {
+                    return;
+                  }
 
-                const value = window.prompt(labels.mathPrompt, 'E = mc^2');
-                if (value === null) {
-                  return;
+                  const value = window.prompt(labels.mathPrompt, 'E = mc^2');
+                  if (value === null) {
+                    return;
+                  }
+
+                  editor.chain().focus().insertMathBlock(value).run();
+                }}
+                title={labels.math}
+              />
+              <ToolbarButton
+                disabled={!editor || sourceMode}
+                icon="diagram"
+                onClick={() =>
+                  editor?.chain().focus().insertMermaidBlock('graph TD\n  A[Write] --> B[Preview]').run()
                 }
+                title={labels.mermaid}
+              />
+              <ToolbarButton
+                disabled={!editor || sourceMode}
+                icon="image"
+                onClick={onInsertImage}
+                title={labels.image}
+              />
+              <ToolbarButton
+                disabled={!editor || sourceMode}
+                icon="footnote"
+                onClick={() => {
+                  if (!editor) {
+                    return;
+                  }
 
-                editor.chain().focus().insertMathBlock(value).run();
-              }}
-              title={labels.math}
-            />
-            <ToolbarButton
-              disabled={!editor || sourceMode}
-              icon="diagram"
-              onClick={() =>
-                editor?.chain().focus().insertMermaidBlock('graph TD\n  A[Write] --> B[Preview]').run()
-              }
-              title={labels.mermaid}
-            />
-            <ToolbarButton
-              disabled={!editor || sourceMode}
-              icon="image"
-              onClick={onInsertImage}
-              title={labels.image}
-            />
-            <ToolbarButton
-              disabled={!editor || sourceMode}
-              icon="footnote"
-              onClick={() => {
-                if (!editor) {
-                  return;
-                }
+                  const label = window.prompt(labels.footnotePrompt, '1');
+                  if (!label) {
+                    return;
+                  }
 
-                const label = window.prompt(labels.footnotePrompt, '1');
-                if (!label) {
-                  return;
-                }
-
-                editor.chain().focus().insertFootnoteReference(label).run();
-                editor
-                  .chain()
-                  .focus()
-                  .insertContent({ type: 'paragraph' })
-                  .insertFootnoteDefinition(label)
-                  .run();
-              }}
-              title={labels.footnote}
-            />
+                  editor.chain().focus().insertFootnoteReference(label).run();
+                  editor
+                    .chain()
+                    .focus()
+                    .insertContent({ type: 'paragraph' })
+                    .insertFootnoteDefinition(label)
+                    .run();
+                }}
+                title={labels.footnote}
+              />
+            </div>
 
             <div className="toolbar__divider" />
 
-            <ToolbarButton
-              active={sourceMode}
-              icon="source"
-              onClick={onToggleSourceMode}
-              title={sourceMode ? labels.sourceOn : labels.sourceOff}
-            />
-            <ToolbarButton
-              active={themePanelOpen || theme !== 'system'}
-              icon="appearance"
-              onClick={() => setThemePanelOpen((current) => !current)}
-              title={`${labels.themePanel} / ${themeLabel} / ${currentPalette?.label ?? labels.auto}`}
-            />
+            <div className="toolbar__group toolbar__group--mode">
+              <ToolbarButton
+                active={sourceMode}
+                icon="source"
+                onClick={onToggleSourceMode}
+                title={sourceMode ? labels.sourceOn : labels.sourceOff}
+              />
+              <ToolbarButton
+                active={themePanelOpen || theme !== 'system'}
+                icon="appearance"
+                onClick={() => setThemePanelOpen((current) => !current)}
+                title={`${labels.themePanel} / ${themeLabel} / ${currentPalette?.label ?? labels.auto}`}
+              />
+            </div>
           </div>
 
           {themePanelOpen ? (
