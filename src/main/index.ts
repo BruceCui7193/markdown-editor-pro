@@ -331,7 +331,7 @@ async function readWindowState(): Promise<PersistedWindowState> {
     const parsed = JSON.parse(raw) as Partial<PersistedWindowState>;
 
     return {
-      width: Math.max(parsed.width ?? DEFAULT_WINDOW_STATE.width, 960),
+      width: Math.max(parsed.width ?? DEFAULT_WINDOW_STATE.width, 420),
       height: Math.max(parsed.height ?? DEFAULT_WINDOW_STATE.height, 680),
       x: parsed.x,
       y: parsed.y,
@@ -351,7 +351,7 @@ function captureWindowState(window: BrowserWindow): PersistedWindowState {
   const bounds = window.isMaximized() ? window.getNormalBounds() : window.getBounds();
 
   return {
-    width: Math.max(bounds.width, 960),
+    width: Math.max(bounds.width, 420),
     height: Math.max(bounds.height, 680),
     x: bounds.x,
     y: bounds.y,
@@ -1241,7 +1241,7 @@ async function createMainWindow(options: WindowInitOptions = {}): Promise<Browse
     height: windowState.height,
     x: windowState.x,
     y: windowState.y,
-    minWidth: 960,
+    minWidth: 420,
     minHeight: 680,
     show: false,
     backgroundColor: '#f3f4f2',

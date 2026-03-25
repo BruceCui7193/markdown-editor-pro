@@ -260,6 +260,7 @@ interface EditorViewportProps {
   editorFrameRef: RefObject<HTMLDivElement>;
   editorHostRef: RefObject<HTMLDivElement>;
   loading: boolean;
+  modeSwitching: boolean;
   searchPanel: JSX.Element | null;
   sourceMode: boolean;
   sourceDraft: string;
@@ -274,6 +275,7 @@ const EditorViewport = memo(function EditorViewport({
   editorFrameRef,
   editorHostRef,
   loading,
+  modeSwitching,
   searchPanel,
   sourceMode,
   sourceDraft,
@@ -289,6 +291,12 @@ const EditorViewport = memo(function EditorViewport({
       onMouseDown={onFrameMouseDown}
     >
       {loading ? <div className="editor-loading">正在载入文档...</div> : null}
+      {modeSwitching ? (
+        <div className="editor-loading editor-loading--mode-switch" role="status" aria-live="polite">
+          <span className="editor-loading__spinner" />
+          <span>正在切换模式...</span>
+        </div>
+      ) : null}
       {searchPanel}
       {sourceMode ? (
         <textarea
@@ -347,10 +355,6 @@ const SearchPanel = memo(function SearchPanel({
   queryInputRef,
   replaceInputRef,
 }: SearchPanelProps) {
-  if (!open) {
-    return null;
-  }
-
   const handleInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Enter') {
       return;
@@ -367,7 +371,12 @@ const SearchPanel = memo(function SearchPanel({
   };
 
   return (
-    <div className="search-panel" role="dialog" aria-label="查找和替换">
+    <div
+      aria-hidden={!open}
+      className={open ? 'search-panel is-open' : 'search-panel is-closed'}
+      role="dialog"
+      aria-label="查找和替换"
+    >
       <div className="search-panel__row">
         <input
           ref={queryInputRef}
@@ -400,8 +409,7 @@ const SearchPanel = memo(function SearchPanel({
           关闭
         </button>
       </div>
-      {replaceVisible ? (
-        <div className="search-panel__row">
+      <div className={replaceVisible ? 'search-panel__row search-panel__replace is-open' : 'search-panel__row search-panel__replace is-closed'}>
           <input
             ref={replaceInputRef}
             className="search-panel__input"
@@ -419,7 +427,6 @@ const SearchPanel = memo(function SearchPanel({
             全部替换
           </button>
         </div>
-      ) : null}
     </div>
   );
 });
@@ -467,6 +474,7 @@ export default function EditorShell({
   const pendingSourceSelectionRef = useRef<SourceSearchMatch | null>(null);
   const pendingVisualSelectionRestoreRef = useRef(false);
   const startupCaretPlacedRef = useRef(false);
+  const modeSwitchOverlayTimerRef = useRef<number | null>(null);
   const sourceSelectionRef = useRef<SourceSearchMatch>({
     start: 0,
     end: 0,
@@ -492,6 +500,7 @@ export default function EditorShell({
   const [liveStats, setLiveStats] = useState(document.stats);
   const [liveDirty, setLiveDirty] = useState(document.dirty);
   const [loadingExternalDocument, setLoadingExternalDocument] = useState(false);
+  const [modeSwitching, setModeSwitching] = useState(false);
   const sourceModeRef = useRef(sourceMode);
   const sourceDraftRef = useRef(sourceDraft);
   const searchPanelOpenRef = useRef(false);
@@ -991,6 +1000,11 @@ export default function EditorShell({
       lastEmittedMarkdownRef.current = canonicalMarkdown;
       setVisualSearchRevision((current) => current + 1);
       armSkipNextDocChange();
+
+      if (!(nextEditor.state.selection instanceof TextSelection)) {
+        const nextSelection = TextSelection.create(nextEditor.state.doc, 1, 1);
+        nextEditor.view.dispatch(nextEditor.state.tr.setSelection(nextSelection));
+      }
     },
     onUpdate: ({ editor: nextEditor, transaction }) => {
       if (externalUpdateRef.current || sourceModeRef.current) {
@@ -1119,6 +1133,10 @@ export default function EditorShell({
 
       if (pendingVisualDocumentSyncRef.current !== null) {
         cancelIdleWork(pendingVisualDocumentSyncRef.current);
+      }
+
+      if (modeSwitchOverlayTimerRef.current !== null) {
+        window.clearTimeout(modeSwitchOverlayTimerRef.current);
       }
     };
   }, []);
@@ -1731,6 +1749,24 @@ export default function EditorShell({
     restoreVisualSelectionFromMarkedContent,
   ]);
 
+  const toggleSourceModeWithTransition = useCallback(() => {
+    if (modeSwitchOverlayTimerRef.current !== null) {
+      window.clearTimeout(modeSwitchOverlayTimerRef.current);
+      modeSwitchOverlayTimerRef.current = null;
+    }
+
+    setModeSwitching(true);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        toggleSourceModePreservingViewport();
+        modeSwitchOverlayTimerRef.current = window.setTimeout(() => {
+          setModeSwitching(false);
+          modeSwitchOverlayTimerRef.current = null;
+        }, 420);
+      });
+    });
+  }, [toggleSourceModePreservingViewport]);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
@@ -1789,7 +1825,7 @@ export default function EditorShell({
 
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === 'e') {
         event.preventDefault();
-        toggleSourceModePreservingViewport();
+        toggleSourceModeWithTransition();
         return;
       }
 
@@ -1825,7 +1861,7 @@ export default function EditorShell({
     openSearchPanel,
     searchCurrentIndex,
     searchOpen,
-    toggleSourceModePreservingViewport,
+    toggleSourceModeWithTransition,
   ]);
 
   useEffect(() => {
@@ -1865,7 +1901,7 @@ export default function EditorShell({
       }
 
       if (menuEvent.detail === 'toggle-source-mode') {
-        toggleSourceModePreservingViewport();
+        toggleSourceModeWithTransition();
         return;
       }
 
@@ -1883,7 +1919,7 @@ export default function EditorShell({
     return () => {
       window.removeEventListener('markdown-editor:menu-action', handler as EventListener);
     };
-  }, [toggleSourceModePreservingViewport]);
+  }, [toggleSourceModeWithTransition]);
 
   const handleFrameMouseDown = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
@@ -1963,8 +1999,8 @@ export default function EditorShell({
   }, []);
 
   const handleToggleSourceMode = useCallback(() => {
-    toggleSourceModePreservingViewport();
-  }, [toggleSourceModePreservingViewport]);
+    toggleSourceModeWithTransition();
+  }, [toggleSourceModeWithTransition]);
 
   const handleNavigateOutline = useCallback(
     (index: number) => {
@@ -2006,7 +2042,7 @@ export default function EditorShell({
         onSetThemePalette={onSetThemePalette}
       />
 
-      <main className={sidebarVisible ? 'workspace workspace--with-sidebar' : 'workspace workspace--single'}>
+      <main className={sidebarVisible ? 'workspace workspace--with-sidebar' : 'workspace workspace--with-sidebar is-sidebar-collapsed'}>
         <Sidebar
           currentFilePath={document.path}
           folderEntries={folder?.entries ?? []}
@@ -2025,6 +2061,7 @@ export default function EditorShell({
           editorFrameRef={editorFrameRef}
           editorHostRef={editorHostRef}
           loading={loadingExternalDocument}
+          modeSwitching={modeSwitching}
           onFrameMouseDown={handleFrameMouseDown}
           onSourceChange={handleSourceChange}
           onSourceSelect={handleSourceSelect}

@@ -35,6 +35,9 @@ interface ToolbarButtonProps {
   title: string;
 }
 
+type ToolbarLayoutMode = 'full' | 'dense' | 'compact';
+type ToolbarGroupId = 'document' | 'text-style' | 'structure' | 'insert' | 'view';
+
 function ToolbarButton({
   icon,
   active = false,
@@ -79,6 +82,9 @@ function Toolbar({
   onToggleSourceMode,
 }: ToolbarProps) {
   const [themePanelOpen, setThemePanelOpen] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<ToolbarLayoutMode>('full');
+  const [denseStep, setDenseStep] = useState(0);
+  const [compactGroupOpen, setCompactGroupOpen] = useState<ToolbarGroupId | null>(null);
   const toolbarRef = useRef<HTMLElement | null>(null);
   const labels = {
     hideToolbar: '\u9690\u85cf\u5de5\u5177\u680f',
@@ -129,19 +135,21 @@ function Toolbar({
   const currentPalette = THEME_PALETTE_OPTIONS.find((option) => option.id === themePalette);
 
   useEffect(() => {
-    if (!themePanelOpen) {
+    if (!themePanelOpen && !compactGroupOpen) {
       return;
     }
 
     const handlePointerDown = (event: MouseEvent) => {
       if (!toolbarRef.current?.contains(event.target as Node)) {
         setThemePanelOpen(false);
+        setCompactGroupOpen(null);
       }
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setThemePanelOpen(false);
+        setCompactGroupOpen(null);
       }
     };
 
@@ -152,217 +160,404 @@ function Toolbar({
       document.removeEventListener('mousedown', handlePointerDown);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [themePanelOpen]);
+  }, [compactGroupOpen, themePanelOpen]);
+
+  useEffect(() => {
+    if (!toolbarVisible) {
+      return;
+    }
+
+    const toolbar = toolbarRef.current;
+    if (!toolbar) {
+      return;
+    }
+
+    const updateLayoutMode = () => {
+      const width = toolbar.clientWidth;
+      if (width <= 700) {
+        setLayoutMode((current) => (current === 'compact' ? current : 'compact'));
+        setDenseStep(0);
+        return;
+      }
+
+      if (width <= 1320) {
+        setLayoutMode((current) => (current === 'dense' ? current : 'dense'));
+        const nextDenseStep =
+          width <= 780 ? 5 : width <= 900 ? 4 : width <= 1020 ? 3 : width <= 1140 ? 2 : 1;
+        setDenseStep((current) => (current === nextDenseStep ? current : nextDenseStep));
+        return;
+      }
+
+      setLayoutMode((current) => (current === 'full' ? current : 'full'));
+      setDenseStep(0);
+    };
+
+    requestAnimationFrame(updateLayoutMode);
+    const observer = new ResizeObserver(updateLayoutMode);
+    observer.observe(toolbar);
+    return () => observer.disconnect();
+  }, [toolbarVisible]);
+
+  useEffect(() => {
+    if (layoutMode !== 'compact') {
+      setCompactGroupOpen(null);
+    }
+  }, [layoutMode]);
+
+  useEffect(() => {
+    if (toolbarVisible) {
+      return;
+    }
+
+    setThemePanelOpen(false);
+    setCompactGroupOpen(null);
+  }, [toolbarVisible]);
+
+  const isDenseSplitGroup = (group: ToolbarGroupId): boolean => {
+    if (layoutMode !== 'dense') {
+      return false;
+    }
+
+    const thresholds: Record<ToolbarGroupId, number> = {
+      'text-style': 1,
+      structure: 2,
+      document: 3,
+      insert: 4,
+      view: 5,
+    };
+
+    return denseStep >= thresholds[group];
+  };
+
+  const runCompactAction = (action: () => void) => {
+    action();
+    setCompactGroupOpen(null);
+  };
+
+  const renderGroupActions = (group: ToolbarGroupId) => {
+    if (group === 'document') {
+      return (
+        <>
+          <ToolbarButton icon="menu" onClick={() => runCompactAction(onToggleToolbar)} title={labels.hideToolbar} />
+          <ToolbarButton
+            active={sidebarVisible}
+            icon="sidebar"
+            onClick={() => runCompactAction(onToggleSidebar)}
+            title={sidebarVisible ? labels.hideSidebar : labels.showSidebar}
+          />
+          <ToolbarButton icon="newWindow" onClick={() => runCompactAction(onNewWindow)} title={labels.newWindow} />
+          <ToolbarButton icon="open" onClick={() => runCompactAction(onOpen)} title={labels.openFile} />
+          <ToolbarButton icon="folder" onClick={() => runCompactAction(onOpenFolder)} title={labels.openFolder} />
+          <ToolbarButton icon="save" onClick={() => runCompactAction(onSave)} title={labels.save} />
+          <ToolbarButton icon="saveAs" onClick={() => runCompactAction(onSaveAs)} title={labels.saveAs} />
+          <ToolbarButton
+            active={searchVisible}
+            icon="search"
+            onClick={() => runCompactAction(() => onOpenSearch(true))}
+            title={labels.findReplace}
+          />
+        </>
+      );
+    }
+
+    if (group === 'text-style') {
+      return (
+        <>
+          <ToolbarButton
+            active={editor?.isActive('heading', { level: 1 })}
+            disabled={!editor || sourceMode}
+            icon="heading1"
+            onClick={() => runCompactAction(() => editor?.chain().focus().toggleHeading({ level: 1 }).run())}
+            title={labels.heading1}
+          />
+          <ToolbarButton
+            active={editor?.isActive('heading', { level: 2 })}
+            disabled={!editor || sourceMode}
+            icon="heading2"
+            onClick={() => runCompactAction(() => editor?.chain().focus().toggleHeading({ level: 2 }).run())}
+            title={labels.heading2}
+          />
+          <ToolbarButton
+            active={editor?.isActive('bold')}
+            disabled={!editor || sourceMode}
+            icon="bold"
+            onClick={() => runCompactAction(() => editor?.chain().focus().toggleBold().run())}
+            title={labels.bold}
+          />
+          <ToolbarButton
+            active={editor?.isActive('italic')}
+            disabled={!editor || sourceMode}
+            icon="italic"
+            onClick={() => runCompactAction(() => editor?.chain().focus().toggleItalic().run())}
+            title={labels.italic}
+          />
+          <ToolbarButton
+            active={editor?.isActive('underline')}
+            disabled={!editor || sourceMode}
+            icon="underline"
+            onClick={() => runCompactAction(() => editor?.chain().focus().toggleUnderline().run())}
+            title={labels.underline}
+          />
+          <ToolbarButton
+            active={editor?.isActive('strike')}
+            disabled={!editor || sourceMode}
+            icon="strike"
+            onClick={() => runCompactAction(() => editor?.chain().focus().toggleStrike().run())}
+            title={labels.strike}
+          />
+          <ToolbarButton
+            active={editor?.isActive('link')}
+            disabled={!editor || sourceMode}
+            icon="link"
+            onClick={() =>
+              runCompactAction(() => {
+                if (!editor) {
+                  return;
+                }
+                const previous = editor.getAttributes('link').href as string | undefined;
+                const href = window.prompt(labels.linkPrompt, previous ?? 'https://');
+                if (!href) {
+                  return;
+                }
+                editor.chain().focus().extendMarkRange('link').setLink({ href }).run();
+              })
+            }
+            title={labels.link}
+          />
+        </>
+      );
+    }
+
+    if (group === 'structure') {
+      return (
+        <>
+          <ToolbarButton
+            active={editor?.isActive('blockquote')}
+            disabled={!editor || sourceMode}
+            icon="quote"
+            onClick={() => runCompactAction(() => editor?.chain().focus().toggleBlockquote().run())}
+            title={labels.quote}
+          />
+          <ToolbarButton
+            active={editor?.isActive('bulletList')}
+            disabled={!editor || sourceMode}
+            icon="bullet"
+            onClick={() => runCompactAction(() => editor?.chain().focus().toggleBulletList().run())}
+            title={labels.bullet}
+          />
+          <ToolbarButton
+            active={editor?.isActive('orderedList')}
+            disabled={!editor || sourceMode}
+            icon="ordered"
+            onClick={() => runCompactAction(() => editor?.chain().focus().toggleOrderedList().run())}
+            title={labels.ordered}
+          />
+          <ToolbarButton
+            active={editor?.isActive('taskList')}
+            disabled={!editor || sourceMode}
+            icon="task"
+            onClick={() => runCompactAction(() => editor?.chain().focus().toggleTaskList().run())}
+            title={labels.task}
+          />
+          <ToolbarButton
+            disabled={!editor || sourceMode}
+            icon="table"
+            onClick={() =>
+              runCompactAction(() =>
+                editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+              )
+            }
+            title={labels.table}
+          />
+          <ToolbarButton
+            active={editor?.isActive('codeBlock')}
+            disabled={!editor || sourceMode}
+            icon="code"
+            onClick={() => runCompactAction(() => editor?.chain().focus().toggleCodeBlock().run())}
+            title={labels.code}
+          />
+        </>
+      );
+    }
+
+    if (group === 'insert') {
+      return (
+        <>
+          <ToolbarButton
+            disabled={!editor || sourceMode}
+            icon="math"
+            onClick={() =>
+              runCompactAction(() => {
+                if (!editor) {
+                  return;
+                }
+                const value = window.prompt(labels.mathPrompt, 'E = mc^2');
+                if (value === null) {
+                  return;
+                }
+                editor.chain().focus().insertMathBlock(value).run();
+              })
+            }
+            title={labels.math}
+          />
+          <ToolbarButton
+            disabled={!editor || sourceMode}
+            icon="diagram"
+            onClick={() =>
+              runCompactAction(() =>
+                editor?.chain().focus().insertMermaidBlock('graph TD\n  A[Write] --> B[Preview]').run(),
+              )
+            }
+            title={labels.mermaid}
+          />
+          <ToolbarButton
+            disabled={!editor || sourceMode}
+            icon="image"
+            onClick={() => runCompactAction(onInsertImage)}
+            title={labels.image}
+          />
+          <ToolbarButton
+            disabled={!editor || sourceMode}
+            icon="footnote"
+            onClick={() =>
+              runCompactAction(() => {
+                if (!editor) {
+                  return;
+                }
+                const label = window.prompt(labels.footnotePrompt, '1');
+                if (!label) {
+                  return;
+                }
+                editor.chain().focus().insertFootnoteReference(label).run();
+                editor
+                  .chain()
+                  .focus()
+                  .insertContent({ type: 'paragraph' })
+                  .insertFootnoteDefinition(label)
+                  .run();
+              })
+            }
+            title={labels.footnote}
+          />
+        </>
+      );
+    }
+
+    return (
+      <>
+        <ToolbarButton
+          active={sourceMode}
+          icon="source"
+          onClick={() => runCompactAction(onToggleSourceMode)}
+          title={sourceMode ? labels.sourceOn : labels.sourceOff}
+        />
+        <ToolbarButton
+          active={themePanelOpen || theme !== 'system'}
+          icon="appearance"
+          onClick={() => setThemePanelOpen((current) => !current)}
+          title={`${labels.themePanel} / ${themeLabel} / ${currentPalette?.label ?? labels.auto}`}
+        />
+      </>
+    );
+  };
 
   return (
     <>
-      {toolbarVisible ? (
-        <header className="toolbar" ref={toolbarRef}>
+      <header
+        aria-hidden={!toolbarVisible}
+        className={clsx('toolbar', `toolbar--${layoutMode}`, toolbarVisible ? 'is-visible' : 'is-hidden')}
+        ref={toolbarRef}
+      >
           <div className="toolbar__row">
-            <div className="toolbar__group toolbar__group--file">
-              <ToolbarButton icon="menu" onClick={onToggleToolbar} title={labels.hideToolbar} />
-              <ToolbarButton
-                active={sidebarVisible}
-                icon="sidebar"
-                onClick={onToggleSidebar}
-                title={sidebarVisible ? labels.hideSidebar : labels.showSidebar}
-              />
-              <ToolbarButton icon="newWindow" onClick={onNewWindow} title={labels.newWindow} />
-              <ToolbarButton icon="open" onClick={onOpen} title={labels.openFile} />
-              <ToolbarButton icon="folder" onClick={onOpenFolder} title={labels.openFolder} />
-              <ToolbarButton icon="save" onClick={onSave} title={labels.save} />
-              <ToolbarButton icon="saveAs" onClick={onSaveAs} title={labels.saveAs} />
-              <ToolbarButton
-                active={searchVisible}
-                icon="search"
-                onClick={() => onOpenSearch(true)}
-                title={labels.findReplace}
-              />
-            </div>
-
-            <div className="toolbar__divider" />
-
-            <div className="toolbar__group toolbar__group--format">
-              <ToolbarButton
-                active={editor?.isActive('heading', { level: 1 })}
-                disabled={!editor || sourceMode}
-                icon="heading1"
-                onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}
-                title={labels.heading1}
-              />
-              <ToolbarButton
-                active={editor?.isActive('heading', { level: 2 })}
-                disabled={!editor || sourceMode}
-                icon="heading2"
-                onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
-                title={labels.heading2}
-              />
-              <ToolbarButton
-                active={editor?.isActive('bold')}
-                disabled={!editor || sourceMode}
-                icon="bold"
-                onClick={() => editor?.chain().focus().toggleBold().run()}
-                title={labels.bold}
-              />
-              <ToolbarButton
-                active={editor?.isActive('italic')}
-                disabled={!editor || sourceMode}
-                icon="italic"
-                onClick={() => editor?.chain().focus().toggleItalic().run()}
-                title={labels.italic}
-              />
-              <ToolbarButton
-                active={editor?.isActive('underline')}
-                disabled={!editor || sourceMode}
-                icon="underline"
-                onClick={() => editor?.chain().focus().toggleUnderline().run()}
-                title={labels.underline}
-              />
-              <ToolbarButton
-                active={editor?.isActive('strike')}
-                disabled={!editor || sourceMode}
-                icon="strike"
-                onClick={() => editor?.chain().focus().toggleStrike().run()}
-                title={labels.strike}
-              />
-              <ToolbarButton
-                active={editor?.isActive('link')}
-                disabled={!editor || sourceMode}
-                icon="link"
-                onClick={() => {
-                  if (!editor) {
-                    return;
-                  }
-
-                  const previous = editor.getAttributes('link').href as string | undefined;
-                  const href = window.prompt(labels.linkPrompt, previous ?? 'https://');
-                  if (!href) {
-                    return;
-                  }
-
-                  editor.chain().focus().extendMarkRange('link').setLink({ href }).run();
-                }}
-                title={labels.link}
-              />
-              <ToolbarButton
-                active={editor?.isActive('blockquote')}
-                disabled={!editor || sourceMode}
-                icon="quote"
-                onClick={() => editor?.chain().focus().toggleBlockquote().run()}
-                title={labels.quote}
-              />
-              <ToolbarButton
-                active={editor?.isActive('bulletList')}
-                disabled={!editor || sourceMode}
-                icon="bullet"
-                onClick={() => editor?.chain().focus().toggleBulletList().run()}
-                title={labels.bullet}
-              />
-              <ToolbarButton
-                active={editor?.isActive('orderedList')}
-                disabled={!editor || sourceMode}
-                icon="ordered"
-                onClick={() => editor?.chain().focus().toggleOrderedList().run()}
-                title={labels.ordered}
-              />
-              <ToolbarButton
-                active={editor?.isActive('taskList')}
-                disabled={!editor || sourceMode}
-                icon="task"
-                onClick={() => editor?.chain().focus().toggleTaskList().run()}
-                title={labels.task}
-              />
-              <ToolbarButton
-                disabled={!editor || sourceMode}
-                icon="table"
-                onClick={() =>
-                  editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
-                }
-                title={labels.table}
-              />
-              <ToolbarButton
-                active={editor?.isActive('codeBlock')}
-                disabled={!editor || sourceMode}
-                icon="code"
-                onClick={() => editor?.chain().focus().toggleCodeBlock().run()}
-                title={labels.code}
-              />
-              <ToolbarButton
-                disabled={!editor || sourceMode}
-                icon="math"
-                onClick={() => {
-                  if (!editor) {
-                    return;
-                  }
-
-                  const value = window.prompt(labels.mathPrompt, 'E = mc^2');
-                  if (value === null) {
-                    return;
-                  }
-
-                  editor.chain().focus().insertMathBlock(value).run();
-                }}
-                title={labels.math}
-              />
-              <ToolbarButton
-                disabled={!editor || sourceMode}
-                icon="diagram"
-                onClick={() =>
-                  editor?.chain().focus().insertMermaidBlock('graph TD\n  A[Write] --> B[Preview]').run()
-                }
-                title={labels.mermaid}
-              />
-              <ToolbarButton
-                disabled={!editor || sourceMode}
-                icon="image"
-                onClick={onInsertImage}
-                title={labels.image}
-              />
-              <ToolbarButton
-                disabled={!editor || sourceMode}
-                icon="footnote"
-                onClick={() => {
-                  if (!editor) {
-                    return;
-                  }
-
-                  const label = window.prompt(labels.footnotePrompt, '1');
-                  if (!label) {
-                    return;
-                  }
-
-                  editor.chain().focus().insertFootnoteReference(label).run();
-                  editor
-                    .chain()
-                    .focus()
-                    .insertContent({ type: 'paragraph' })
-                    .insertFootnoteDefinition(label)
-                    .run();
-                }}
-                title={labels.footnote}
-              />
-            </div>
-
-            <div className="toolbar__divider" />
-
-            <div className="toolbar__group toolbar__group--mode">
-              <ToolbarButton
-                active={sourceMode}
-                icon="source"
-                onClick={onToggleSourceMode}
-                title={sourceMode ? labels.sourceOn : labels.sourceOff}
-              />
-              <ToolbarButton
-                active={themePanelOpen || theme !== 'system'}
-                icon="appearance"
-                onClick={() => setThemePanelOpen((current) => !current)}
-                title={`${labels.themePanel} / ${themeLabel} / ${currentPalette?.label ?? labels.auto}`}
-              />
-            </div>
+            {layoutMode === 'compact' ? (
+              <>
+                <button
+                  className={clsx('toolbar-group-launcher', compactGroupOpen === 'document' && 'is-active')}
+                  onClick={() => setCompactGroupOpen((current) => (current === 'document' ? null : 'document'))}
+                  type="button"
+                >
+                  <Icon className="toolbar-group-launcher__icon" name="open" />
+                  <span>文档</span>
+                </button>
+                <button
+                  className={clsx('toolbar-group-launcher', compactGroupOpen === 'text-style' && 'is-active')}
+                  onClick={() => setCompactGroupOpen((current) => (current === 'text-style' ? null : 'text-style'))}
+                  type="button"
+                >
+                  <Icon className="toolbar-group-launcher__icon" name="bold" />
+                  <span>文本</span>
+                </button>
+                <button
+                  className={clsx('toolbar-group-launcher', compactGroupOpen === 'structure' && 'is-active')}
+                  onClick={() => setCompactGroupOpen((current) => (current === 'structure' ? null : 'structure'))}
+                  type="button"
+                >
+                  <Icon className="toolbar-group-launcher__icon" name="bullet" />
+                  <span>结构</span>
+                </button>
+                <button
+                  className={clsx('toolbar-group-launcher', compactGroupOpen === 'insert' && 'is-active')}
+                  onClick={() => setCompactGroupOpen((current) => (current === 'insert' ? null : 'insert'))}
+                  type="button"
+                >
+                  <Icon className="toolbar-group-launcher__icon" name="image" />
+                  <span>插入</span>
+                </button>
+                <button
+                  className={clsx('toolbar-group-launcher', compactGroupOpen === 'view' && 'is-active')}
+                  onClick={() => setCompactGroupOpen((current) => (current === 'view' ? null : 'view'))}
+                  type="button"
+                >
+                  <Icon className="toolbar-group-launcher__icon" name="appearance" />
+                  <span>视图</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <div
+                  className={clsx('toolbar__group toolbar__group--document',
+                    isDenseSplitGroup('document') && 'is-split')}
+                >
+                  {renderGroupActions('document')}
+                </div>
+                <div
+                  className={clsx('toolbar__group toolbar__group--text-style',
+                    isDenseSplitGroup('text-style') && 'is-split')}
+                >
+                  {renderGroupActions('text-style')}
+                </div>
+                <div
+                  className={clsx('toolbar__group toolbar__group--structure',
+                    isDenseSplitGroup('structure') && 'is-split')}
+                >
+                  {renderGroupActions('structure')}
+                </div>
+                <div
+                  className={clsx('toolbar__group toolbar__group--insert',
+                    isDenseSplitGroup('insert') && 'is-split')}
+                >
+                  {renderGroupActions('insert')}
+                </div>
+                <div
+                  className={clsx('toolbar__group toolbar__group--view',
+                    isDenseSplitGroup('view') && 'is-split')}
+                >
+                  {renderGroupActions('view')}
+                </div>
+              </>
+            )}
           </div>
 
-          {themePanelOpen ? (
-            <div className="theme-panel">
+          {layoutMode === 'compact' && compactGroupOpen ? (
+            <div className="toolbar-compact-panel">
+              <div className="toolbar__group toolbar__group--compact">{renderGroupActions(compactGroupOpen)}</div>
+            </div>
+          ) : null}
+
+          <div
+            aria-hidden={!themePanelOpen}
+            className={themePanelOpen ? 'theme-panel is-open' : 'theme-panel is-closed'}
+          >
               <div className="theme-panel__section">
                 <div className="theme-panel__title">{labels.appearanceMode}</div>
                 <div className="theme-panel__modes">
@@ -426,18 +621,18 @@ function Toolbar({
                 </div>
               </div>
             </div>
-          ) : null}
         </header>
-      ) : (
-        <button
-          className="toolbar-reveal"
-          data-tooltip={labels.showToolbar}
-          onClick={onToggleToolbar}
-          type="button"
-        >
-          <Icon className="toolbar-button__icon" name="menu" />
-        </button>
-      )}
+
+      <button
+        aria-hidden={toolbarVisible}
+        className={clsx('toolbar-reveal', toolbarVisible ? 'is-hidden' : 'is-visible')}
+        data-tooltip={labels.showToolbar}
+        onClick={onToggleToolbar}
+        tabIndex={toolbarVisible ? -1 : 0}
+        type="button"
+      >
+        <Icon className="toolbar-button__icon" name="menu" />
+      </button>
     </>
   );
 }
