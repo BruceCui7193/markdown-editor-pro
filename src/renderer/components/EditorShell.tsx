@@ -8,9 +8,11 @@
   type ChangeEvent,
   type MouseEvent,
   type RefObject,
+  type SyntheticEvent,
 } from 'react';
 import { EditorContent, useEditor, type Editor as TiptapEditor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
+import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import type { OpenedFolder, ThemeMode } from '@shared/contracts';
 import type { DocumentStats, EditorDocumentState } from '../App';
 import type { ThemePalette } from '../theme';
@@ -170,6 +172,57 @@ function cancelIdleWork(handle: IdleHandle | null): void {
   window.clearTimeout(handle);
 }
 
+function computeScrollRatio(element: { scrollTop: number; scrollHeight: number; clientHeight: number }): number {
+  const maxScrollTop = Math.max(element.scrollHeight - element.clientHeight, 0);
+  return maxScrollTop > 0 ? element.scrollTop / maxScrollTop : 0;
+}
+
+function insertSelectionMarkersIntoMarkdown(markdown: string, start: number, end: number): string {
+  const selectionStart = Math.max(0, Math.min(start, markdown.length));
+  const selectionEnd = Math.max(selectionStart, Math.min(end, markdown.length));
+
+  return `${markdown.slice(0, selectionStart)}${SELECTION_START_MARKER}${markdown.slice(
+    selectionStart,
+    selectionEnd,
+  )}${SELECTION_END_MARKER}${markdown.slice(selectionEnd)}`;
+}
+
+function extractSelectionMarkersFromMarkdown(markdown: string): {
+  markdown: string;
+  selection: SourceSearchMatch;
+} {
+  const startIndex = markdown.indexOf(SELECTION_START_MARKER);
+  const endIndex = markdown.indexOf(SELECTION_END_MARKER);
+  const withoutStart = markdown.replace(SELECTION_START_MARKER, '');
+  const normalizedEndIndex =
+    endIndex === -1
+      ? startIndex === -1
+        ? 0
+        : startIndex
+      : endIndex - (startIndex !== -1 && startIndex < endIndex ? SELECTION_START_MARKER.length : 0);
+  const cleanMarkdown = withoutStart.replace(SELECTION_END_MARKER, '');
+  const selectionStart = startIndex === -1 ? Math.min(normalizedEndIndex, cleanMarkdown.length) : startIndex;
+  const selectionEnd = Math.max(selectionStart, Math.min(normalizedEndIndex, cleanMarkdown.length));
+
+  return {
+    markdown: cleanMarkdown,
+    selection: {
+      start: selectionStart,
+      end: selectionEnd,
+    },
+  };
+}
+
+function clampSourceSelection(selection: SourceSearchMatch, markdown: string): SourceSearchMatch {
+  const start = Math.max(0, Math.min(selection.start, markdown.length));
+  const end = Math.max(start, Math.min(selection.end, markdown.length));
+  return { start, end };
+}
+
+function isSameSourceSelection(left: SourceSearchMatch | null, right: SourceSearchMatch | null): boolean {
+  return left?.start === right?.start && left?.end === right?.end;
+}
+
 function createMarkdownWorker(): Worker {
   return new Worker(new URL('../editor/markdown.worker.ts', import.meta.url), {
     type: 'module',
@@ -178,9 +231,12 @@ function createMarkdownWorker(): Worker {
 
 const VISUAL_META_SYNC_DELAY_MS = 260;
 const VISUAL_DOCUMENT_SYNC_TIMEOUT_MS = 1400;
+const SELECTION_START_MARKER = 'MDEDITORSELECTIONSTARTTOKEN';
+const SELECTION_END_MARKER = 'MDEDITORSELECTIONENDTOKEN';
 
 interface EditorViewportProps {
   editor: TiptapEditor | null;
+  editorFrameRef: RefObject<HTMLDivElement>;
   editorHostRef: RefObject<HTMLDivElement>;
   loading: boolean;
   searchPanel: JSX.Element | null;
@@ -189,10 +245,12 @@ interface EditorViewportProps {
   sourceTextareaRef: RefObject<HTMLTextAreaElement>;
   onFrameMouseDown: (event: MouseEvent<HTMLDivElement>) => void;
   onSourceChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
+  onSourceSelect: (event: SyntheticEvent<HTMLTextAreaElement>) => void;
 }
 
 const EditorViewport = memo(function EditorViewport({
   editor,
+  editorFrameRef,
   editorHostRef,
   loading,
   searchPanel,
@@ -201,9 +259,11 @@ const EditorViewport = memo(function EditorViewport({
   sourceTextareaRef,
   onFrameMouseDown,
   onSourceChange,
+  onSourceSelect,
 }: EditorViewportProps) {
   return (
     <div
+      ref={editorFrameRef}
       className={sourceMode ? 'editor-frame is-source' : 'editor-frame'}
       onMouseDown={onFrameMouseDown}
     >
@@ -214,6 +274,7 @@ const EditorViewport = memo(function EditorViewport({
           ref={sourceTextareaRef}
           className="editor-source"
           onChange={onSourceChange}
+          onSelect={onSourceSelect}
           spellCheck={false}
           value={sourceDraft}
         />
@@ -345,6 +406,7 @@ export default function EditorShell({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
+  const editorFrameRef = useRef<HTMLDivElement | null>(null);
   const sourceTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editorHostRef = useRef<HTMLDivElement | null>(null);
   const markdownWorkerRef = useRef<Worker | null>(null);
@@ -363,6 +425,21 @@ export default function EditorShell({
   const skipNextDocChangeTimerRef = useRef<number | null>(null);
   const pendingVisualMetaSyncRef = useRef<number | null>(null);
   const pendingVisualDocumentSyncRef = useRef<IdleHandle | null>(null);
+  const pendingModeSwitchScrollRatioRef = useRef<number | null>(null);
+  const pendingSourceSelectionRef = useRef<SourceSearchMatch | null>(null);
+  const pendingVisualSelectionRestoreRef = useRef(false);
+  const sourceSelectionRef = useRef<SourceSearchMatch>({
+    start: document.markdown.length,
+    end: document.markdown.length,
+  });
+  const sourcePreviewCacheRef = useRef<{
+    markdown: string;
+    selection: SourceSearchMatch;
+    content: JSONContent;
+  } | null>(null);
+  const sourcePreviewTimerRef = useRef<number | null>(null);
+  const sourcePreviewRequestRef = useRef(0);
+  const blankDocumentAutofocusDoneRef = useRef(false);
   const [toolbarVisible, setToolbarVisible] = useState(() => {
     return window.localStorage.getItem('markdown-editor-toolbar') !== 'hidden';
   });
@@ -470,6 +547,180 @@ export default function EditorShell({
     [document.savedMarkdown, onDocumentChange, onDocumentMetaChange],
   );
 
+  const captureModeSwitchScrollRatio = useCallback(() => {
+    const activeScrollElement = sourceModeRef.current
+      ? sourceTextareaRef.current
+      : editorFrameRef.current;
+    if (!activeScrollElement) {
+      pendingModeSwitchScrollRatioRef.current = null;
+      return;
+    }
+
+    pendingModeSwitchScrollRatioRef.current = computeScrollRatio(activeScrollElement);
+  }, []);
+
+  const buildSourceDraftFromVisualSelection = useCallback(
+    (targetEditor: TiptapEditor): { markdown: string; selection: SourceSearchMatch } => {
+      const { from, to } = targetEditor.state.selection;
+      const transaction = targetEditor.state.tr;
+      transaction.insertText(SELECTION_END_MARKER, to);
+      transaction.insertText(SELECTION_START_MARKER, from);
+
+      const markedMarkdown = serializeMarkdown(transaction.doc.toJSON());
+      return extractSelectionMarkersFromMarkdown(markedMarkdown);
+    },
+    [],
+  );
+
+  const restoreVisualSelectionFromMarkedContent = useCallback((targetEditor: TiptapEditor) => {
+    const { state, view } = targetEditor;
+    const removalEntries: Array<
+      | {
+          kind: 'text';
+          from: number;
+          to: number;
+          text: string;
+          marks: JSONContent['marks'];
+          startPos?: number;
+          endPos?: number;
+        }
+      | {
+          kind: 'math';
+          pos: number;
+          value: string;
+          startOffset?: number;
+          endOffset?: number;
+        }
+    > = [];
+
+    state.doc.descendants((node, pos) => {
+      if (node.isText && node.text && node.text.includes('MDEDITORSELECTION')) {
+        const startIndex = node.text.indexOf(SELECTION_START_MARKER);
+        const endIndex = node.text.indexOf(SELECTION_END_MARKER);
+        removalEntries.push({
+          kind: 'text',
+          from: pos,
+          to: pos + node.text.length,
+          text: node.text
+            .replace(SELECTION_START_MARKER, '')
+            .replace(SELECTION_END_MARKER, ''),
+          marks: node.marks as JSONContent['marks'],
+          startPos: startIndex === -1 ? undefined : pos + startIndex,
+          endPos:
+            endIndex === -1
+              ? undefined
+              : pos +
+                endIndex -
+                (startIndex !== -1 && startIndex < endIndex ? SELECTION_START_MARKER.length : 0),
+        });
+        return true;
+      }
+
+      if (
+        (node.type.name === 'mathInline' || node.type.name === 'mathBlock') &&
+        String(node.attrs.value ?? '').includes('MDEDITORSELECTION')
+      ) {
+        const value = String(node.attrs.value ?? '');
+        const startIndex = value.indexOf(SELECTION_START_MARKER);
+        const endIndex = value.indexOf(SELECTION_END_MARKER);
+        removalEntries.push({
+          kind: 'math',
+          pos,
+          value: value.replace(SELECTION_START_MARKER, '').replace(SELECTION_END_MARKER, ''),
+          startOffset: startIndex === -1 ? undefined : startIndex,
+          endOffset:
+            endIndex === -1
+              ? undefined
+              : endIndex -
+                (startIndex !== -1 && startIndex < endIndex ? SELECTION_START_MARKER.length : 0),
+        });
+        return false;
+      }
+
+      return true;
+    });
+
+    if (!removalEntries.length) {
+      return false;
+    }
+
+    const orderedEntries = [...removalEntries].sort((left, right) => {
+      const leftPos = left.kind === 'text' ? left.from : left.pos;
+      const rightPos = right.kind === 'text' ? right.from : right.pos;
+      return rightPos - leftPos;
+    });
+
+    let tr = state.tr;
+    let startPos: number | null = null;
+    let endPos: number | null = null;
+    let mathSelection: { pos: number; start: number; end: number } | null = null;
+
+    for (const entry of orderedEntries) {
+      if (entry.kind === 'text') {
+        if (entry.startPos !== undefined) {
+          startPos = entry.startPos;
+        }
+        if (entry.endPos !== undefined) {
+          endPos = entry.endPos;
+        }
+
+        tr = tr.insertText(entry.text, entry.from, entry.to);
+        continue;
+      }
+
+      if (entry.startOffset !== undefined) {
+        startPos = entry.pos;
+      }
+      if (entry.endOffset !== undefined) {
+        endPos = entry.pos;
+      }
+
+      const node = tr.doc.nodeAt(entry.pos);
+      if (!node) {
+        continue;
+      }
+
+      tr = tr.setNodeMarkup(entry.pos, undefined, {
+        ...node.attrs,
+        value: entry.value,
+      });
+
+      mathSelection = {
+        pos: entry.pos,
+        start: entry.startOffset ?? 0,
+        end: entry.endOffset ?? entry.startOffset ?? 0,
+      };
+    }
+
+    if (startPos !== null || endPos !== null) {
+      const mappedStart = tr.mapping.map(startPos ?? endPos ?? 1, -1);
+      const mappedEnd = tr.mapping.map(endPos ?? startPos ?? 1, -1);
+      tr = tr.setSelection(TextSelection.create(tr.doc, mappedStart, mappedEnd));
+      view.dispatch(tr);
+      view.focus();
+      return true;
+    }
+
+    if (mathSelection) {
+      const mappedPos = tr.mapping.map(mathSelection.pos, -1);
+      tr = tr.setSelection(NodeSelection.create(tr.doc, mappedPos));
+      view.dispatch(tr);
+      view.focus();
+      window.dispatchEvent(
+        new CustomEvent('markdown-editor:focus-math-search-match', {
+          detail: {
+            pos: mappedPos,
+            start: mathSelection.start,
+            end: mathSelection.end,
+          },
+        }),
+      );
+      return true;
+    }
+
+    return false;
+  }, []);
+
   const parseMarkdownInWorker = useCallback((markdown: string) => {
     if (!markdownWorkerRef.current) {
       markdownWorkerRef.current = createMarkdownWorker();
@@ -507,6 +758,53 @@ export default function EditorShell({
     });
   }, []);
 
+  const queueSourcePreview = useCallback(
+    (markdown: string, selection: SourceSearchMatch) => {
+      const normalizedSelection = clampSourceSelection(selection, markdown);
+      sourceSelectionRef.current = normalizedSelection;
+      sourcePreviewCacheRef.current = null;
+      sourcePreviewRequestRef.current += 1;
+      const requestId = sourcePreviewRequestRef.current;
+
+      if (sourcePreviewTimerRef.current !== null) {
+        window.clearTimeout(sourcePreviewTimerRef.current);
+      }
+
+      sourcePreviewTimerRef.current = window.setTimeout(() => {
+        sourcePreviewTimerRef.current = null;
+        const markedMarkdown = insertSelectionMarkersIntoMarkdown(
+          markdown,
+          normalizedSelection.start,
+          normalizedSelection.end,
+        );
+
+        void parseMarkdownInWorker(markedMarkdown)
+          .then((result) => {
+            if (
+              requestId !== sourcePreviewRequestRef.current ||
+              !sourceModeRef.current ||
+              sourceDraftRef.current !== markdown ||
+              !isSameSourceSelection(sourceSelectionRef.current, normalizedSelection)
+            ) {
+              return;
+            }
+
+            sourcePreviewCacheRef.current = {
+              markdown,
+              selection: normalizedSelection,
+              content: result.content,
+            };
+          })
+          .catch(() => {
+            if (requestId === sourcePreviewRequestRef.current) {
+              sourcePreviewCacheRef.current = null;
+            }
+          });
+      }, markdown.length >= LARGE_DOCUMENT_THRESHOLD ? 180 : 60);
+    },
+    [parseMarkdownInWorker],
+  );
+
   useEffect(() => {
     return () => {
       markdownWorkerRef.current?.terminate();
@@ -515,12 +813,21 @@ export default function EditorShell({
         window.clearTimeout(skipNextDocChangeTimerRef.current);
         skipNextDocChangeTimerRef.current = null;
       }
+      if (sourcePreviewTimerRef.current !== null) {
+        window.clearTimeout(sourcePreviewTimerRef.current);
+        sourcePreviewTimerRef.current = null;
+      }
     };
   }, []);
 
   useEffect(() => {
     if (sourceMode) {
       setSourceDraft(document.markdown);
+      sourceSelectionRef.current = {
+        start: document.markdown.length,
+        end: document.markdown.length,
+      };
+      sourcePreviewCacheRef.current = null;
       const nextStats = computeSourceStats(document.markdown);
       setLiveStats((current) => (areStatsEqual(current, nextStats) ? current : nextStats));
       setLiveDirty(document.dirty);
@@ -540,6 +847,19 @@ export default function EditorShell({
 
   useEffect(() => {
     window.localStorage.setItem('markdown-editor-source-mode', sourceMode ? 'true' : 'false');
+  }, [sourceMode]);
+
+  useEffect(() => {
+    if (sourceMode) {
+      return;
+    }
+
+    sourcePreviewCacheRef.current = null;
+    sourcePreviewRequestRef.current += 1;
+    if (sourcePreviewTimerRef.current !== null) {
+      window.clearTimeout(sourcePreviewTimerRef.current);
+      sourcePreviewTimerRef.current = null;
+    }
   }, [sourceMode]);
 
   const extensions = useMemo(
@@ -568,6 +888,25 @@ export default function EditorShell({
     [],
   );
 
+  const handleEditorCopy = useCallback((view: TiptapEditor['view'], event: Event) => {
+    const clipboardEvent = event as ClipboardEvent;
+    if (view.state.selection.empty || !clipboardEvent.clipboardData) {
+      return false;
+    }
+
+    const content = view.state.selection.content().content.toJSON() as Parameters<
+      typeof serializeMarkdownFragment
+    >[0];
+    const markdown = serializeMarkdownFragment(content).trimEnd();
+    if (!markdown) {
+      return false;
+    }
+
+    clipboardEvent.clipboardData.setData('text/plain', markdown);
+    clipboardEvent.preventDefault();
+    return true;
+  }, []);
+
   const handleEditorClick = useCallback((_view: unknown, _pos: unknown, event: Event) => {
     const target = event.target as HTMLElement;
     const link = target?.closest('a[href]') as HTMLAnchorElement | null;
@@ -592,9 +931,12 @@ export default function EditorShell({
         spellcheck: 'true',
       },
       clipboardTextSerializer: handleClipboardTextSerialize,
+      handleDOMEvents: {
+        copy: handleEditorCopy,
+      },
       handleClick: handleEditorClick,
     }),
-    [handleClipboardTextSerialize, handleEditorClick],
+    [handleClipboardTextSerialize, handleEditorClick, handleEditorCopy],
   );
 
   const editor = useEditor({
@@ -888,7 +1230,29 @@ export default function EditorShell({
 
   useEffect(() => {
     if (sourceMode) {
-      sourceTextareaRef.current?.focus();
+      requestAnimationFrame(() => {
+        const input = sourceTextareaRef.current;
+        if (!input) {
+          return;
+        }
+
+        input.focus({ preventScroll: true });
+        const selection = pendingSourceSelectionRef.current;
+        if (selection) {
+          input.setSelectionRange(selection.start, selection.end);
+          sourceSelectionRef.current = selection;
+          queueSourcePreview(sourceDraftRef.current, selection);
+          pendingSourceSelectionRef.current = null;
+          return;
+        }
+
+        const nextSelection = {
+          start: input.selectionStart ?? sourceDraftRef.current.length,
+          end: input.selectionEnd ?? sourceDraftRef.current.length,
+        };
+        sourceSelectionRef.current = nextSelection;
+        queueSourcePreview(sourceDraftRef.current, nextSelection);
+      });
       return;
     }
 
@@ -902,7 +1266,67 @@ export default function EditorShell({
         (heading as HTMLElement).dataset.outlineIndex = String(index);
       });
     });
-  }, [document.markdown, sourceMode]);
+  }, [document.markdown, queueSourcePreview, sourceMode]);
+
+  useEffect(() => {
+    const ratio = pendingModeSwitchScrollRatioRef.current;
+    if (ratio === null) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const target = sourceMode ? sourceTextareaRef.current : editorFrameRef.current;
+        if (!target) {
+          pendingModeSwitchScrollRatioRef.current = null;
+          return;
+        }
+
+        const maxScrollTop = Math.max(target.scrollHeight - target.clientHeight, 0);
+        target.scrollTop = maxScrollTop * ratio;
+        pendingModeSwitchScrollRatioRef.current = null;
+      });
+    });
+  }, [document.markdown, sourceDraft, sourceMode]);
+
+  useEffect(() => {
+    if (sourceMode || !editor || !pendingVisualSelectionRestoreRef.current) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (sourceModeRef.current || !pendingVisualSelectionRestoreRef.current) {
+          return;
+        }
+
+        pendingVisualSelectionRestoreRef.current = false;
+        restoreVisualSelectionFromMarkedContent(editor);
+      });
+    });
+  }, [editor, restoreVisualSelectionFromMarkedContent, sourceMode]);
+
+  useEffect(() => {
+    if (
+      !editor ||
+      sourceMode ||
+      blankDocumentAutofocusDoneRef.current ||
+      document.path !== null ||
+      document.markdown.length > 0 ||
+      document.dirty
+    ) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      if (!editor || sourceModeRef.current) {
+        return;
+      }
+
+      editor.chain().focus('end').run();
+      blankDocumentAutofocusDoneRef.current = true;
+    });
+  }, [document.dirty, document.markdown, document.path, editor, sourceMode]);
 
   const searchMatches = useMemo<Array<SourceSearchMatch | VisualSearchMatch>>(() => {
     if (!searchOpen || !searchQuery) {
@@ -1176,6 +1600,90 @@ export default function EditorShell({
     />
   );
 
+  const toggleSourceModePreservingViewport = useCallback(() => {
+    captureModeSwitchScrollRatio();
+    setSourceMode((current) => {
+      if (!current) {
+        pendingVisualSelectionRestoreRef.current = false;
+        if (editor) {
+          flushVisualSync(editor);
+          const sourceState = buildSourceDraftFromVisualSelection(editor);
+          pendingSourceSelectionRef.current = sourceState.selection;
+          sourceSelectionRef.current = sourceState.selection;
+          setSourceDraft(sourceState.markdown);
+          queueSourcePreview(sourceState.markdown, sourceState.selection);
+          return true;
+        }
+
+        const fallbackMarkdown = documentMarkdownRef.current;
+        pendingSourceSelectionRef.current = {
+          start: fallbackMarkdown.length,
+          end: fallbackMarkdown.length,
+        };
+        sourceSelectionRef.current = pendingSourceSelectionRef.current;
+        setSourceDraft(fallbackMarkdown);
+        return true;
+      }
+
+      if (editor) {
+        const input = sourceTextareaRef.current;
+        const markdown = sourceDraftRef.current;
+        const selection = clampSourceSelection(
+          {
+            start: input?.selectionStart ?? sourceSelectionRef.current.start,
+            end: input?.selectionEnd ?? sourceSelectionRef.current.end,
+          },
+          markdown,
+        );
+        sourceSelectionRef.current = selection;
+
+        const cachedPreview = sourcePreviewCacheRef.current;
+        const cacheHit =
+          cachedPreview &&
+          cachedPreview.markdown === markdown &&
+          isSameSourceSelection(cachedPreview.selection, selection);
+
+        if (!cacheHit) {
+          const markedContent = parseMarkdown(
+            insertSelectionMarkersIntoMarkdown(markdown, selection.start, selection.end),
+          );
+
+          externalUpdateRef.current = true;
+          armSkipNextDocChange();
+          editor.commands.setContent(markedContent, false);
+          externalUpdateRef.current = false;
+        }
+
+        pendingVisualSelectionRestoreRef.current = true;
+        const stats = computeSourceStats(markdown);
+        onDocumentChange(markdown, stats);
+        onDocumentMetaChange(markdown !== document.savedMarkdown);
+        visualMarkdownRef.current = markdown;
+        visualStatsRef.current = stats;
+        lastEmittedMarkdownRef.current = markdown;
+        setLiveStats((currentStats) => (areStatsEqual(currentStats, stats) ? currentStats : stats));
+        setLiveDirty(markdown !== document.savedMarkdown);
+        const nextOutline = extractOutline(markdown);
+        setOutline((currentOutline) =>
+          areOutlinesEqual(currentOutline, nextOutline) ? currentOutline : nextOutline,
+        );
+        setVisualSearchRevision((currentRevision) => currentRevision + 1);
+      }
+
+      return false;
+    });
+  }, [
+    armSkipNextDocChange,
+    buildSourceDraftFromVisualSelection,
+    captureModeSwitchScrollRatio,
+    document.savedMarkdown,
+    editor,
+    onDocumentChange,
+    onDocumentMetaChange,
+    queueSourcePreview,
+    restoreVisualSelectionFromMarkedContent,
+  ]);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
@@ -1211,13 +1719,7 @@ export default function EditorShell({
 
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === 'e') {
         event.preventDefault();
-        setSourceMode((current) => {
-          if (!current) {
-            const visualState = flushVisualSync();
-            setSourceDraft(visualState?.markdown ?? documentMarkdownRef.current);
-          }
-          return !current;
-        });
+        toggleSourceModePreservingViewport();
         return;
       }
 
@@ -1246,7 +1748,14 @@ export default function EditorShell({
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [closeSearchPanel, onSaveDocument, onSaveDocumentAs, openSearchPanel, searchOpen]);
+  }, [
+    closeSearchPanel,
+    onSaveDocument,
+    onSaveDocumentAs,
+    openSearchPanel,
+    searchOpen,
+    toggleSourceModePreservingViewport,
+  ]);
 
   useEffect(() => {
     return window.markdownEditor.onRequestSaveBeforeClose(() => {
@@ -1285,13 +1794,7 @@ export default function EditorShell({
       }
 
       if (menuEvent.detail === 'toggle-source-mode') {
-        setSourceMode((current) => {
-          if (!current) {
-            const visualState = flushVisualSync();
-            setSourceDraft(visualState?.markdown ?? documentMarkdownRef.current);
-          }
-          return !current;
-        });
+        toggleSourceModePreservingViewport();
         return;
       }
 
@@ -1309,7 +1812,7 @@ export default function EditorShell({
     return () => {
       window.removeEventListener('markdown-editor:menu-action', handler as EventListener);
     };
-  }, []);
+  }, [toggleSourceModePreservingViewport]);
 
   const handleFrameMouseDown = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
@@ -1336,9 +1839,28 @@ export default function EditorShell({
 
   const handleSourceChange = useCallback(
     (event: ChangeEvent<HTMLTextAreaElement>) => {
+      const selection = {
+        start: event.target.selectionStart ?? event.target.value.length,
+        end: event.target.selectionEnd ?? event.target.value.length,
+      };
+      sourceSelectionRef.current = selection;
       applySourceMarkdown(event.target.value);
+      queueSourcePreview(event.target.value, selection);
     },
-    [applySourceMarkdown],
+    [applySourceMarkdown, queueSourcePreview],
+  );
+
+  const handleSourceSelect = useCallback(
+    (event: SyntheticEvent<HTMLTextAreaElement>) => {
+      const target = event.currentTarget;
+      const selection = {
+        start: target.selectionStart ?? target.value.length,
+        end: target.selectionEnd ?? target.value.length,
+      };
+      sourceSelectionRef.current = selection;
+      queueSourcePreview(target.value, selection);
+    },
+    [queueSourcePreview],
   );
 
   const handleToolbarSave = useCallback(() => {
@@ -1370,14 +1892,8 @@ export default function EditorShell({
   }, []);
 
   const handleToggleSourceMode = useCallback(() => {
-    setSourceMode((current) => {
-      if (!current) {
-        const visualState = flushVisualSync();
-        setSourceDraft(visualState?.markdown ?? documentMarkdownRef.current);
-      }
-      return !current;
-    });
-  }, [editor]);
+    toggleSourceModePreservingViewport();
+  }, [toggleSourceModePreservingViewport]);
 
   const handleNavigateOutline = useCallback(
     (index: number) => {
@@ -1435,10 +1951,12 @@ export default function EditorShell({
 
         <EditorViewport
           editor={editor}
+          editorFrameRef={editorFrameRef}
           editorHostRef={editorHostRef}
           loading={loadingExternalDocument}
           onFrameMouseDown={handleFrameMouseDown}
           onSourceChange={handleSourceChange}
+          onSourceSelect={handleSourceSelect}
           searchPanel={searchPanel}
           sourceDraft={sourceDraft}
           sourceMode={sourceMode}
