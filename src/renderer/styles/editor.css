@@ -790,7 +790,6 @@
 }
 
 .editor-surface code,
-.editor-source,
 .math-block-editor__textarea,
 .math-inline-node__input {
   font-family: "Cascadia Code", "JetBrains Mono", monospace;
@@ -886,6 +885,7 @@
   resize: none;
   background: transparent;
   color: var(--ui-text);
+  font-family: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
   font-size: 15px;
   line-height: 1.7;
   padding: 30px 0 36px;
