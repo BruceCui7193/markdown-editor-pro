@@ -630,6 +630,7 @@
 
 .workspace--with-sidebar.is-sidebar-collapsed {
   --sidebar-width: 0px;
+  gap: 0;
 }
 
 .workspace--single {
