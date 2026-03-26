@@ -5,7 +5,6 @@ export interface CodeLanguageOption {
 
 export const CODE_LANGUAGE_OPTIONS: CodeLanguageOption[] = [
   { value: '', label: 'Plain Text' },
-  { value: 'plaintext', label: 'Plain Text' },
   { value: 'bash', label: 'Bash / Shell' },
   { value: 'javascript', label: 'JavaScript' },
   { value: 'typescript', label: 'TypeScript' },
@@ -29,6 +28,10 @@ export const CODE_LANGUAGE_OPTIONS: CodeLanguageOption[] = [
 
 export function getCodeLanguageLabel(value: string | null | undefined): string {
   const normalized = String(value ?? '').trim().toLowerCase();
+
+  if (normalized === 'plaintext') {
+    return 'Plain Text';
+  }
 
   return (
     CODE_LANGUAGE_OPTIONS.find((option) => option.value.toLowerCase() === normalized)?.label ??

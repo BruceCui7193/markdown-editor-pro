@@ -1,6 +1,10 @@
 import { memo, useEffect, useState } from 'react';
 import { NodeViewWrapper } from '@tiptap/react';
 import type { NodeViewProps } from '@tiptap/react';
+import { deleteBlockNodeAndFocus } from '../block-node-cursor';
+import { handleBlockEditorBoundaryNavigation } from '../node-view-navigation';
+import { highlightMermaid } from '../syntax-highlight';
+import HighlightedTextarea from './HighlightedTextarea';
 
 let renderIndex = 0;
 let mermaidLoader: Promise<typeof import('mermaid')> | null = null;
@@ -14,12 +18,12 @@ function loadMermaid() {
   return mermaidLoader;
 }
 
-function MermaidBlockView({ node, selected, updateAttributes }: NodeViewProps) {
+function MermaidBlockView({ editor, getPos, node, selected, updateAttributes }: NodeViewProps) {
   const [editing, setEditing] = useState(!node.attrs.code);
   const [draft, setDraft] = useState(String(node.attrs.code ?? ''));
   const [svg, setSvg] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const editorHeight = Math.max(220, draft.split('\n').length * 28 + 28);
+  const highlightedDraft = highlightMermaid(draft);
 
   useEffect(() => {
     setDraft(String(node.attrs.code ?? ''));
@@ -28,6 +32,14 @@ function MermaidBlockView({ node, selected, updateAttributes }: NodeViewProps) {
   useEffect(() => {
     let cancelled = false;
     const source = String(editing ? draft : node.attrs.code ?? '');
+
+    if (!source.trim()) {
+      setSvg('');
+      setError(null);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const renderDiagram = async () => {
       try {
@@ -73,16 +85,18 @@ function MermaidBlockView({ node, selected, updateAttributes }: NodeViewProps) {
       }}
     >
       {editing ? (
-        <div className="mermaid-node__editor">
-          <textarea
+        <div className="live-preview-block mermaid-node__editor">
+          <HighlightedTextarea
             autoFocus
-            className="node-card__textarea"
-            style={{ height: `${editorHeight}px` }}
+            className="mermaid-node__input-shell"
+            highlightedHtml={highlightedDraft}
+            inputClassName="live-preview-block__textarea mermaid-node__textarea"
+            minHeight={180}
             onBlur={() => {
               updateAttributes({ code: draft });
               setEditing(false);
             }}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={setDraft}
             onKeyDown={(event) => {
               if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
                 updateAttributes({ code: draft });
@@ -92,21 +106,48 @@ function MermaidBlockView({ node, selected, updateAttributes }: NodeViewProps) {
               if (event.key === 'Escape') {
                 setDraft(String(node.attrs.code ?? ''));
                 setEditing(false);
+                return;
               }
+
+              if (event.key === 'Backspace' && !draft.trim()) {
+                const position = typeof getPos === 'function' ? getPos() : null;
+                if (typeof position === 'number') {
+                  event.preventDefault();
+                  deleteBlockNodeAndFocus(editor, position, node.nodeSize);
+                }
+                return;
+              }
+
+              handleBlockEditorBoundaryNavigation({
+                editor,
+                event,
+                getPos,
+                nodeSize: node.nodeSize,
+                textLength: draft.length,
+                commit: () => {
+                  updateAttributes({ code: draft });
+                  setEditing(false);
+                },
+              });
             }}
             spellCheck={false}
             value={draft}
           />
           {error ? (
             <div className="node-card__error">{error}</div>
-          ) : (
-            <div className="mermaid-node__preview" dangerouslySetInnerHTML={{ __html: svg }} />
-          )}
+          ) : svg ? (
+            <div
+              className="live-preview-block__preview mermaid-node__preview"
+              dangerouslySetInnerHTML={{ __html: svg }}
+            />
+          ) : null}
         </div>
       ) : error ? (
         <div className="node-card__error">{error}</div>
-      ) : (
+      ) : svg ? (
         <div className="mermaid-node__preview" dangerouslySetInnerHTML={{ __html: svg }} />
+      ) : (
+        <div className="mermaid-node__empty">Mermaid</div>
       )}
     </NodeViewWrapper>
   );

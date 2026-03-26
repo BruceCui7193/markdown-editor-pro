@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { NodeViewWrapper } from '@tiptap/react';
 import type { NodeViewProps } from '@tiptap/react';
+import { handleBlockEditorBoundaryNavigation } from '../node-view-navigation';
 
 interface ParsedImageMarkdown {
   alt: string;
@@ -63,7 +64,7 @@ function parseImageMarkdown(markdown: string): ParsedImageMarkdown | null {
   return { alt, src, title };
 }
 
-function ImageView({ extension, node, selected, updateAttributes }: NodeViewProps) {
+function ImageView({ editor, extension, getPos, node, selected, updateAttributes }: NodeViewProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(
     formatImageMarkdown({
@@ -136,7 +137,17 @@ function ImageView({ extension, node, selected, updateAttributes }: NodeViewProp
                   }),
                 );
                 setEditing(false);
+                return;
               }
+
+              handleBlockEditorBoundaryNavigation({
+                editor,
+                event,
+                getPos,
+                nodeSize: node.nodeSize,
+                textLength: draft.length,
+                commit: commitDraft,
+              });
             }}
             spellCheck={false}
             value={draft}

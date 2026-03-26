@@ -20,7 +20,7 @@ export const MermaidBlock = Node.create({
   addAttributes() {
     return {
       code: {
-        default: 'graph TD\n  A[Idea] --> B[Ship]',
+        default: '',
       },
     };
   },
@@ -60,7 +60,7 @@ export const MermaidBlock = Node.create({
   addCommands() {
     return {
       insertMermaidBlock:
-        (code = 'graph TD\n  A[Idea] --> B[Ship]') =>
+        (code = '') =>
         ({ commands }) =>
           commands.insertContent({
             type: this.name,

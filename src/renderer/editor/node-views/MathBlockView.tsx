@@ -1,6 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NodeViewWrapper } from '@tiptap/react';
 import type { NodeViewProps } from '@tiptap/react';
+import { deleteBlockNodeAndFocus } from '../block-node-cursor';
+import {
+  handleBlockEditorBoundaryNavigation,
+  resolveNodeViewPosition,
+} from '../node-view-navigation';
+import { highlightLatex } from '../syntax-highlight';
+import HighlightedTextarea from './HighlightedTextarea';
 
 let katexLoader: Promise<typeof import('katex')> | null = null;
 
@@ -9,7 +16,7 @@ function loadKatex() {
   return katexLoader;
 }
 
-function MathBlockView({ getPos, node, selected, updateAttributes }: NodeViewProps) {
+function MathBlockView({ editor, getPos, node, selected, updateAttributes }: NodeViewProps) {
   const [editing, setEditing] = useState(!node.attrs.value);
   const [draft, setDraft] = useState(String(node.attrs.value ?? ''));
   const [katexModule, setKatexModule] = useState<typeof import('katex') | null>(null);
@@ -45,6 +52,7 @@ function MathBlockView({ getPos, node, selected, updateAttributes }: NodeViewPro
       strict: 'ignore',
     });
   }, [draft, editing, katexModule, node.attrs.value]);
+  const highlightedDraft = useMemo(() => highlightLatex(draft), [draft]);
 
   const commitDraft = useCallback(() => {
     updateAttributes({ value: draft });
@@ -74,13 +82,7 @@ function MathBlockView({ getPos, node, selected, updateAttributes }: NodeViewPro
   useEffect(() => {
     const handleFocusMatch = (event: Event) => {
       const customEvent = event as CustomEvent<{ pos: number; start: number; end: number }>;
-      let position: number | null = null;
-
-      try {
-        position = typeof getPos === 'function' ? getPos() : null;
-      } catch {
-        position = null;
-      }
+      const position = resolveNodeViewPosition(getPos);
 
       if (position === null || position !== customEvent.detail.pos) {
         return;
@@ -115,12 +117,15 @@ function MathBlockView({ getPos, node, selected, updateAttributes }: NodeViewPro
       ref={wrapperRef}
     >
       {editing ? (
-        <div className="math-block-editor">
-          <textarea
+        <div className="live-preview-block math-block-editor">
+          <HighlightedTextarea
             autoFocus
-            className="math-block-editor__textarea"
+            className="math-block-editor__input-shell"
+            highlightedHtml={highlightedDraft}
+            inputClassName="live-preview-block__textarea math-block-editor__textarea"
+            minHeight={120}
             onBlur={commitDraft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={setDraft}
             onKeyDown={(event) => {
               if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
                 event.preventDefault();
@@ -130,13 +135,35 @@ function MathBlockView({ getPos, node, selected, updateAttributes }: NodeViewPro
               if (event.key === 'Escape') {
                 setDraft(String(node.attrs.value ?? ''));
                 setEditing(false);
+                return;
               }
+
+              if (event.key === 'Backspace' && !draft.trim()) {
+                const position = resolveNodeViewPosition(getPos);
+                if (position !== null) {
+                  event.preventDefault();
+                  deleteBlockNodeAndFocus(editor, position, node.nodeSize);
+                }
+                return;
+              }
+
+              handleBlockEditorBoundaryNavigation({
+                editor,
+                event,
+                getPos,
+                nodeSize: node.nodeSize,
+                textLength: draft.length,
+                commit: commitDraft,
+              });
             }}
-            ref={textareaRef}
+            textareaRef={textareaRef}
             spellCheck={false}
             value={draft}
           />
-          <div className="math-block-editor__preview" dangerouslySetInnerHTML={{ __html: preview }} />
+          <div
+            className="live-preview-block__preview math-block-editor__preview"
+            dangerouslySetInnerHTML={{ __html: preview }}
+          />
         </div>
       ) : (
         <div className="math-block-node__preview" dangerouslySetInnerHTML={{ __html: preview }} />

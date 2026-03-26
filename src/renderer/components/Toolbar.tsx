@@ -921,9 +921,7 @@ function Toolbar({
             hidden={editingControlsHidden}
             icon="diagram"
             onClick={() =>
-              runCompactAction(() =>
-                editor?.chain().focus().insertMermaidBlock('graph TD\n  A[Write] --> B[Preview]').run(),
-              )
+              runCompactAction(() => editor?.chain().focus().insertMermaidBlock('').run())
             }
             title={labels.mermaid}
           />

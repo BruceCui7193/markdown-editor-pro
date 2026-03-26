@@ -1,6 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NodeViewWrapper } from '@tiptap/react';
 import type { NodeViewProps } from '@tiptap/react';
+import {
+  handleInlineEditorBoundaryNavigation,
+  resolveNodeViewPosition,
+} from '../node-view-navigation';
 
 let katexLoader: Promise<typeof import('katex')> | null = null;
 
@@ -9,7 +13,7 @@ function loadKatex() {
   return katexLoader;
 }
 
-function MathInlineView({ getPos, node, selected, updateAttributes }: NodeViewProps) {
+function MathInlineView({ editor, getPos, node, selected, updateAttributes }: NodeViewProps) {
   const [editing, setEditing] = useState(!node.attrs.value);
   const [draft, setDraft] = useState(String(node.attrs.value ?? ''));
   const [katexModule, setKatexModule] = useState<typeof import('katex') | null>(null);
@@ -74,13 +78,7 @@ function MathInlineView({ getPos, node, selected, updateAttributes }: NodeViewPr
   useEffect(() => {
     const handleFocusMatch = (event: Event) => {
       const customEvent = event as CustomEvent<{ pos: number; start: number; end: number }>;
-      let position: number | null = null;
-
-      try {
-        position = typeof getPos === 'function' ? getPos() : null;
-      } catch {
-        position = null;
-      }
+      const position = resolveNodeViewPosition(getPos);
 
       if (position === null || position !== customEvent.detail.pos) {
         return;
@@ -129,7 +127,16 @@ function MathInlineView({ getPos, node, selected, updateAttributes }: NodeViewPr
               if (event.key === 'Escape') {
                 setDraft(String(node.attrs.value ?? ''));
                 setEditing(false);
+                return;
               }
+              handleInlineEditorBoundaryNavigation({
+                editor,
+                event,
+                getPos,
+                nodeSize: node.nodeSize,
+                textLength: draft.length,
+                commit: commitDraft,
+              });
             }}
             ref={inputRef}
             spellCheck={false}
