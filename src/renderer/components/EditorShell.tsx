@@ -76,7 +76,11 @@ type WorkerParseResponse = WorkerParseSuccess | WorkerParseFailure;
 function createEmptyDocument(): JSONContent {
   return {
     type: 'doc',
-    content: [],
+    content: [
+      {
+        type: 'paragraph',
+      },
+    ],
   };
 }
 
@@ -236,6 +240,55 @@ const SELECTION_START_MARKER = 'MDEDITORSELECTIONSTARTTOKEN';
 const SELECTION_END_MARKER = 'MDEDITORSELECTIONENDTOKEN';
 const SEARCH_QUERY_PREFILL_MAX_CHARS = 240;
 const SEARCH_QUERY_PREFILL_MAX_NEWLINES = 2;
+
+function ensureEditableSelectionAtDocumentStart(editor: TiptapEditor): void {
+  const { selection, doc } = editor.state;
+  const singleEmptyParagraph =
+    doc.childCount === 1 &&
+    doc.firstChild?.type.name === 'paragraph' &&
+    doc.firstChild.content.size === 0;
+
+  if (!singleEmptyParagraph) {
+    return;
+  }
+
+  if (selection instanceof TextSelection && selection.$from.parent.isTextblock) {
+    return;
+  }
+
+  const nextSelection = TextSelection.create(doc, 1, 1);
+  editor.view.dispatch(editor.state.tr.setSelection(nextSelection));
+}
+
+function focusWritableDocumentEnd(editor: TiptapEditor): void {
+  const lastNode = editor.state.doc.lastChild;
+
+  if (!lastNode || lastNode.type.name === 'paragraph') {
+    editor.chain().focus('end').run();
+    return;
+  }
+
+  editor
+    .chain()
+    .focus()
+    .command(({ dispatch, state, tr }) => {
+      const paragraphNode = state.schema.nodes.paragraph?.create();
+      if (!paragraphNode) {
+        return false;
+      }
+
+      const insertPos = state.doc.content.size;
+      tr = tr.insert(insertPos, paragraphNode);
+      tr = tr.setSelection(TextSelection.create(tr.doc, tr.doc.content.size - 1));
+
+      if (dispatch) {
+        dispatch(tr.scrollIntoView());
+      }
+
+      return true;
+    })
+    .run();
+}
 
 function normalizeSearchSeedText(text: string): string {
   const trimmed = text.trim();
@@ -1001,10 +1054,14 @@ export default function EditorShell({
       setVisualSearchRevision((current) => current + 1);
       armSkipNextDocChange();
 
-      if (!(nextEditor.state.selection instanceof TextSelection)) {
-        const nextSelection = TextSelection.create(nextEditor.state.doc, 1, 1);
-        nextEditor.view.dispatch(nextEditor.state.tr.setSelection(nextSelection));
-      }
+      ensureEditableSelectionAtDocumentStart(nextEditor);
+      nextEditor.commands.focus('start');
+    },
+    onSelectionUpdate: ({ editor: nextEditor }) => {
+      ensureEditableSelectionAtDocumentStart(nextEditor);
+    },
+    onFocus: ({ editor: nextEditor }) => {
+      ensureEditableSelectionAtDocumentStart(nextEditor);
     },
     onUpdate: ({ editor: nextEditor, transaction }) => {
       if (externalUpdateRef.current || sourceModeRef.current) {
@@ -1779,6 +1836,10 @@ export default function EditorShell({
         activeElement instanceof HTMLElement &&
         (Boolean(activeElement.closest('.ProseMirror')) ||
           Boolean(activeElement.closest('.editor-source')));
+      const activeInEmbeddedInput =
+        activeElement instanceof HTMLInputElement ||
+        (activeElement instanceof HTMLTextAreaElement &&
+          !activeElement.classList.contains('editor-source'));
 
       if (
         searchOpen &&
@@ -1797,6 +1858,29 @@ export default function EditorShell({
       if ((event.ctrlKey || event.metaKey) && key === 'f') {
         event.preventDefault();
         openSearchPanel(false);
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && key === 'a' && activeInEditorSurface) {
+        if (activeInEmbeddedInput) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (sourceModeRef.current) {
+          const input = sourceTextareaRef.current;
+          if (!input) {
+            return;
+          }
+
+          input.focus();
+          input.setSelectionRange(0, input.value.length);
+          return;
+        }
+
+        editor?.chain().focus().selectAll().run();
         return;
       }
 
@@ -1867,6 +1951,7 @@ export default function EditorShell({
     return () => window.removeEventListener('keydown', handler, true);
   }, [
     closeSearchPanel,
+    editor,
     jumpToSearchMatch,
     onSaveDocument,
     onSaveDocumentAs,
@@ -1948,9 +2033,17 @@ export default function EditorShell({
         return;
       }
 
-      if (event.target === event.currentTarget || event.target === editorHostRef.current) {
+      const editorSurface = editorHostRef.current?.querySelector('.ProseMirror');
+
+      if (
+        event.target === event.currentTarget ||
+        event.target === editorHostRef.current ||
+        event.target === editorSurface
+      ) {
         event.preventDefault();
-        editor?.chain().focus('end').run();
+        if (editor) {
+          focusWritableDocumentEnd(editor);
+        }
       }
     },
     [editor, sourceMode],
@@ -2039,6 +2132,7 @@ export default function EditorShell({
         onOpen={onOpenDocument}
         onOpenFolder={onOpenFolder}
         onOpenSearch={openSearchPanel}
+        onCloseSearch={closeSearchPanel}
         onSave={handleToolbarSave}
         onSaveAs={handleToolbarSaveAs}
         searchVisible={searchOpen}

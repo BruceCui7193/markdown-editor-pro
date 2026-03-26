@@ -1,24 +1,44 @@
+import { useEffect, useState } from 'react';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
 import type { NodeViewProps } from '@tiptap/react';
 
 export default function FootnoteDefinitionView({ node, updateAttributes }: NodeViewProps) {
+  const [labelDraft, setLabelDraft] = useState(String(node.attrs.label ?? '1'));
+
+  useEffect(() => {
+    setLabelDraft(String(node.attrs.label ?? '1'));
+  }, [node.attrs.label]);
+
+  const commitLabel = () => {
+    const nextLabel = labelDraft.trim();
+    if (!nextLabel) {
+      setLabelDraft(String(node.attrs.label ?? '1'));
+      return;
+    }
+
+    updateAttributes({ label: nextLabel });
+  };
+
   return (
     <NodeViewWrapper className="footnote-definition-node">
       <div className="footnote-definition-node__meta" contentEditable={false}>
-        <span>{`[^${node.attrs.label}]`}</span>
-        <button
-          onClick={() => {
-            const nextLabel = window.prompt('\u811a\u6ce8\u7f16\u53f7', String(node.attrs.label ?? '1'));
-            if (!nextLabel) {
-              return;
+        <span className="footnote-definition-node__label-prefix">[^</span>
+        <input
+          className="footnote-definition-node__label-input"
+          onBlur={commitLabel}
+          onChange={(event) => setLabelDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              commitLabel();
+              (event.target as HTMLInputElement).blur();
             }
-
-            updateAttributes({ label: nextLabel });
           }}
-          type="button"
-        >
-          {'\u91cd\u547d\u540d'}
-        </button>
+          spellCheck={false}
+          type="text"
+          value={labelDraft}
+        />
+        <span className="footnote-definition-node__label-prefix">]</span>
       </div>
       <NodeViewContent className="footnote-definition-node__content" />
     </NodeViewWrapper>

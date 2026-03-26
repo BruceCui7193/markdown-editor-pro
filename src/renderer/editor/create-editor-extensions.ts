@@ -1,6 +1,5 @@
 import { createLowlight } from 'lowlight';
 import type { AnyExtension } from '@tiptap/core';
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Link from '@tiptap/extension-link';
 import Table from '@tiptap/extension-table';
 import TableCell from '@tiptap/extension-table-cell';
@@ -10,6 +9,7 @@ import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
 import Underline from '@tiptap/extension-underline';
 import StarterKit from '@tiptap/starter-kit';
+import { CodeBlock } from './extensions/code-block';
 import { EditableImage } from './extensions/editable-image';
 import { FootnoteDefinition } from './extensions/footnote-definition';
 import { FootnoteReference } from './extensions/footnote-reference';
@@ -85,6 +85,7 @@ export function createEditorExtensions({
   return [
     StarterKit.configure({
       codeBlock: false,
+      gapcursor: false,
       heading: {
         levels: [1, 2, 3, 4, 5, 6],
       },
@@ -116,7 +117,7 @@ export function createEditorExtensions({
       allowBase64: true,
       resolveImageSource: onResolveImageSource,
     }),
-    CodeBlockLowlight.configure({
+    CodeBlock.configure({
       lowlight,
     }),
     MathInline,

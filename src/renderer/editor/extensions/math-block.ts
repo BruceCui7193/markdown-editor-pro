@@ -1,4 +1,5 @@
 import { InputRule, mergeAttributes, Node } from '@tiptap/core';
+import { TextSelection } from '@tiptap/pm/state';
 import { ReactNodeViewRenderer } from '@tiptap/react';
 import MathBlockView from '../node-views/MathBlockView';
 
@@ -61,11 +62,30 @@ export const MathBlock = Node.create({
     return {
       insertMathBlock:
         (value = '') =>
-        ({ commands }) =>
-          commands.insertContent({
-            type: this.name,
-            attrs: { value },
-          }),
+        ({ state, tr, dispatch }) => {
+          const mathNode = state.schema.nodes.mathBlock?.create({ value });
+          if (!mathNode) {
+            return false;
+          }
+
+          const paragraphNode = state.schema.nodes.paragraph?.create();
+          if (!paragraphNode) {
+            return false;
+          }
+
+          const { from, to } = state.selection;
+          tr = tr.replaceWith(from, to, mathNode);
+
+          const paragraphPos = from + mathNode.nodeSize;
+          tr = tr.insert(paragraphPos, paragraphNode);
+          tr = tr.setSelection(TextSelection.create(tr.doc, paragraphPos + 1));
+
+          if (dispatch) {
+            dispatch(tr.scrollIntoView());
+          }
+
+          return true;
+        },
     };
   },
 

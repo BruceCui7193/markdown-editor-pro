@@ -1,4 +1,4 @@
-import type { ReactElement, SVGProps } from 'react';
+import { useEffect, useState, type ReactElement, type SVGProps } from 'react';
 
 type IconName =
   | 'menu'
@@ -21,6 +21,13 @@ type IconName =
   | 'ordered'
   | 'task'
   | 'table'
+  | 'rowAddBefore'
+  | 'rowAddAfter'
+  | 'rowDelete'
+  | 'columnAddBefore'
+  | 'columnAddAfter'
+  | 'columnDelete'
+  | 'tableDelete'
   | 'code'
   | 'math'
   | 'diagram'
@@ -139,6 +146,48 @@ const iconPaths: Record<IconName, ReactElement> = {
   ordered: <path d="M5.5 8h1v2h-1M5 16h2l-2 2h2M10 8h8M10 12h8M10 16h8" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />,
   task: <path d="M5 7h3v3H5zM5 14h3v3H5zM10 8h9M10 15h9M6 15.5l.8.8L8 14.8" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />,
   table: <path d="M4 6h16v12H4zM4 11h16M9 6v12M15 6v12" fill="none" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />,
+  rowAddBefore: (
+    <>
+      <path d="M4 6h16v12H4zM4 11h16M9 6v12M15 6v12" fill="none" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />
+      <path d="M12 2.8v3.4M10.3 4.5h3.4" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+    </>
+  ),
+  rowAddAfter: (
+    <>
+      <path d="M4 6h16v12H4zM4 11h16M9 6v12M15 6v12" fill="none" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />
+      <path d="M12 17.8v3.4M10.3 19.5h3.4" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+    </>
+  ),
+  rowDelete: (
+    <>
+      <path d="M4 6h16v12H4zM4 11h16M9 6v12M15 6v12" fill="none" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />
+      <path d="M9.5 19.5h5" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+    </>
+  ),
+  columnAddBefore: (
+    <>
+      <path d="M4 6h16v12H4zM4 11h16M9 6v12M15 6v12" fill="none" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />
+      <path d="M2.8 12h3.4M4.5 10.3v3.4" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+    </>
+  ),
+  columnAddAfter: (
+    <>
+      <path d="M4 6h16v12H4zM4 11h16M9 6v12M15 6v12" fill="none" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />
+      <path d="M17.8 12h3.4M19.5 10.3v3.4" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+    </>
+  ),
+  columnDelete: (
+    <>
+      <path d="M4 6h16v12H4zM4 11h16M9 6v12M15 6v12" fill="none" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />
+      <path d="M19.2 9.5v5" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+    </>
+  ),
+  tableDelete: (
+    <>
+      <path d="M4 6h16v12H4zM4 11h16M9 6v12M15 6v12" fill="none" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />
+      <path d="M17.2 4.8l2.8 2.8M20 4.8l-2.8 2.8" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+    </>
+  ),
   code: <path d="M9 8L5 12l4 4M15 8l4 4-4 4M13 6l-2 12" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />,
   math: <path d="M5 7l5 10M10 7L5 17M14 9h5M16.5 6.5v5M14 16h5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />,
   diagram: <path d="M6 6h5v4H6zM13 14h5v4h-5zM6 14h5v4H6zM8.5 10v2M8.5 12h7M15.5 12v2" fill="none" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />,
@@ -200,11 +249,270 @@ const iconPaths: Record<IconName, ReactElement> = {
   ),
 };
 
+const iconFileNames: Record<IconName, string> = {
+  menu: 'menu.ico',
+  newWindow: 'newWindow.ico',
+  open: 'open.ico',
+  folder: 'folder.ico',
+  save: 'save.ico',
+  saveAs: 'saveAs.ico',
+  search: 'search.ico',
+  sidebar: 'sidebar.ico',
+  heading1: 'heading1.ico',
+  heading2: 'heading2.ico',
+  bold: 'bold.ico',
+  italic: 'italic.ico',
+  underline: 'underline.ico',
+  strike: 'strike.ico',
+  link: 'link.ico',
+  quote: 'quote.ico',
+  bullet: 'bullet.ico',
+  ordered: 'ordered.ico',
+  task: 'task.ico',
+  table: 'table.ico',
+  rowAddBefore: 'table.ico',
+  rowAddAfter: 'table.ico',
+  rowDelete: 'table.ico',
+  columnAddBefore: 'table.ico',
+  columnAddAfter: 'table.ico',
+  columnDelete: 'table.ico',
+  tableDelete: 'table.ico',
+  code: 'code.ico',
+  math: 'math.ico',
+  diagram: 'diagram.ico',
+  image: 'image.ico',
+  footnote: 'footnote.ico',
+  source: 'source.ico',
+  appearance: 'appearance.ico',
+  sun: 'sun.ico',
+  moon: 'moon.ico',
+  autoTheme: 'autoTheme.ico',
+};
+
+function buildIconAssetMap(folderName: 'ico_dark' | 'ico_light'): Record<IconName, string> {
+  return Object.fromEntries(
+    Object.entries(iconFileNames).map(([key, fileName]) => [
+      key,
+      new URL(`../../../build/toolbar/${folderName}/${fileName}`, import.meta.url).toString(),
+    ]),
+  ) as Record<IconName, string>;
+}
+
+const iconAssetsForLightMode = buildIconAssetMap('ico_dark');
+const iconAssetsForDarkMode = buildIconAssetMap('ico_light');
+const vectorOnlyIcons = new Set<IconName>([
+  'rowAddBefore',
+  'rowAddAfter',
+  'rowDelete',
+  'columnAddBefore',
+  'columnAddAfter',
+  'columnDelete',
+  'tableDelete',
+]);
+
+const loadedIconAssets = new Set<string>();
+const loadingIconAssets = new Map<string, Promise<void>>();
+
+function loadIconAsset(asset: string): Promise<void> {
+  if (loadedIconAssets.has(asset)) {
+    return Promise.resolve();
+  }
+
+  const loading = loadingIconAssets.get(asset);
+  if (loading) {
+    return loading;
+  }
+
+  const promise = new Promise<void>((resolve, reject) => {
+    const image = new window.Image();
+    image.decoding = 'async';
+    image.onload = () => {
+      loadedIconAssets.add(asset);
+      loadingIconAssets.delete(asset);
+      resolve();
+    };
+    image.onerror = () => {
+      loadingIconAssets.delete(asset);
+      reject(new Error(`Failed to load icon asset: ${asset}`));
+    };
+    image.src = asset;
+  });
+
+  loadingIconAssets.set(asset, promise);
+  return promise;
+}
+
+function scheduleBackgroundTask(task: () => void, timeoutMs: number): () => void {
+  if (typeof window === 'undefined') {
+    return () => {};
+  }
+
+  const idleWindow = window as Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+
+  if (idleWindow.requestIdleCallback) {
+    const handle = idleWindow.requestIdleCallback(task, { timeout: timeoutMs });
+    return () => {
+      idleWindow.cancelIdleCallback?.(handle);
+    };
+  }
+
+  const timeoutHandle = window.setTimeout(task, Math.min(timeoutMs, 500));
+  return () => {
+    window.clearTimeout(timeoutHandle);
+  };
+}
+
+function useAsyncIconAsset(asset: string | null, timeoutMs = 1200): boolean {
+  const [loaded, setLoaded] = useState(() => (asset ? loadedIconAssets.has(asset) : false));
+
+  useEffect(() => {
+    if (!asset) {
+      setLoaded(false);
+      return;
+    }
+
+    if (loadedIconAssets.has(asset)) {
+      setLoaded(true);
+      return;
+    }
+
+    setLoaded(false);
+    let cancelled = false;
+    const cancelTask = scheduleBackgroundTask(() => {
+      void loadIconAsset(asset)
+        .then(() => {
+          if (!cancelled) {
+            setLoaded(true);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setLoaded(false);
+          }
+        });
+    }, timeoutMs);
+
+    return () => {
+      cancelled = true;
+      cancelTask();
+    };
+  }, [asset, timeoutMs]);
+
+  return loaded;
+}
+
+function resolveIsDarkMode(): boolean {
+  if (typeof document === 'undefined') {
+    return false;
+  }
+
+  const rootTheme = document.documentElement.getAttribute('data-theme');
+  const shellTheme = document.querySelector('.app-shell')?.getAttribute('data-theme');
+  const currentTheme = rootTheme ?? shellTheme;
+
+  if (currentTheme === 'dark') {
+    return true;
+  }
+
+  if (currentTheme === 'light') {
+    return false;
+  }
+
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+}
+
+function useReactiveDarkMode(): boolean {
+  const [isDarkMode, setIsDarkMode] = useState(() => resolveIsDarkMode());
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return;
+    }
+
+    const update = () => {
+      setIsDarkMode(resolveIsDarkMode());
+    };
+
+    update();
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleMediaChange = () => update();
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', handleMediaChange);
+    } else {
+      mediaQuery.addListener(handleMediaChange);
+    }
+
+    const observer = new MutationObserver(() => update());
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+
+    const appShell = document.querySelector('.app-shell');
+    if (appShell instanceof HTMLElement) {
+      observer.observe(appShell, {
+        attributes: true,
+        attributeFilter: ['data-theme'],
+      });
+    }
+
+    return () => {
+      if (typeof mediaQuery.removeEventListener === 'function') {
+        mediaQuery.removeEventListener('change', handleMediaChange);
+      } else {
+        mediaQuery.removeListener(handleMediaChange);
+      }
+      observer.disconnect();
+    };
+  }, []);
+
+  return isDarkMode;
+}
+
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName;
 }
 
 export default function Icon({ name, ...props }: IconProps) {
+  const isDarkMode = useReactiveDarkMode();
+  const lightAsset = iconAssetsForLightMode[name];
+  const darkAsset = iconAssetsForDarkMode[name];
+  const activeAsset = isDarkMode ? darkAsset : lightAsset;
+  const backupAsset = isDarkMode ? lightAsset : darkAsset;
+  const activeLoaded = useAsyncIconAsset(activeAsset, 1400);
+  const shouldUseRaster = !vectorOnlyIcons.has(name) && Boolean(activeAsset && activeLoaded);
+
+  useEffect(() => {
+    if (!backupAsset || loadedIconAssets.has(backupAsset)) {
+      return;
+    }
+
+    const cancelTask = scheduleBackgroundTask(() => {
+      void loadIconAsset(backupAsset).catch(() => {});
+    }, 3200);
+
+    return cancelTask;
+  }, [backupAsset]);
+
+  if (shouldUseRaster && activeAsset) {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" {...props}>
+        <image href={activeAsset} width="24" height="24" preserveAspectRatio="xMidYMid meet" />
+      </svg>
+    );
+  }
+
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" {...props}>
       {iconPaths[name]}

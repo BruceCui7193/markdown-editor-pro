@@ -1,5 +1,7 @@
 import { Extension } from '@tiptap/core';
+import { DOMParser as ProseMirrorDOMParser } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
+import type { EditorView } from '@tiptap/pm/view';
 import { convertHtmlToMarkdown, looksLikeStructuredHtml } from '../html-to-markdown';
 import { parseMarkdownFragment } from '../markdown';
 
@@ -59,6 +61,85 @@ function insertPlainTextFallback(text: string) {
   return parseContentFromMarkdown(text.replace(/\r\n/g, '\n'));
 }
 
+function escapeMarkdownTableCell(text: string): string {
+  return text.replace(/\|/g, '\\|').replace(/\n/g, ' ').trim();
+}
+
+function looksLikeTabularPlainText(text: string): boolean {
+  const rows = text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((row) => row.trimEnd())
+    .filter((row) => row.length > 0);
+
+  return rows.length >= 2 && rows.every((row) => row.includes('\t'));
+}
+
+function tabularTextToMarkdown(text: string): string {
+  const rows = text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((row) => row.trimEnd())
+    .filter((row) => row.length > 0)
+    .map((row) => row.split('\t').map((cell) => escapeMarkdownTableCell(cell)));
+
+  if (rows.length < 2) {
+    return '';
+  }
+
+  const columnCount = Math.max(...rows.map((row) => row.length));
+  const paddedRows = rows.map((row) => [
+    ...row,
+    ...Array.from({ length: Math.max(columnCount - row.length, 0) }, () => ''),
+  ]);
+  const header = paddedRows[0];
+  const bodyRows = paddedRows.slice(1);
+  const separator = Array.from({ length: columnCount }, () => '---');
+
+  return [
+    `| ${header.join(' | ')} |`,
+    `| ${separator.join(' | ')} |`,
+    ...bodyRows.map((row) => `| ${row.join(' | ')} |`),
+  ].join('\n');
+}
+
+function extractHtmlTableElement(html: string): HTMLTableElement | null {
+  if (!html.trim()) {
+    return null;
+  }
+
+  const documentFragment = new window.DOMParser().parseFromString(html, 'text/html');
+  return documentFragment.querySelector('table');
+}
+
+function insertHtmlTable(view: EditorView, tableElement: HTMLTableElement): boolean {
+  const wrapper = window.document.createElement('div');
+  wrapper.appendChild(tableElement.cloneNode(true));
+
+  const slice = ProseMirrorDOMParser.fromSchema(view.state.schema).parseSlice(wrapper, {
+    preserveWhitespace: true,
+  });
+
+  if (!slice.content.size) {
+    return false;
+  }
+
+  view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
+  return true;
+}
+
+function isInsideCodeBlock(view: EditorView): boolean {
+  const { $from } = view.state.selection;
+
+  for (let depth = $from.depth; depth >= 0; depth -= 1) {
+    if ($from.node(depth).type.name === 'codeBlock') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function createMarkdownPasteExtension() {
   return Extension.create({
     name: 'markdownPaste',
@@ -67,23 +148,45 @@ export function createMarkdownPasteExtension() {
       return [
         new Plugin({
           props: {
-            handlePaste: (_view, event) => {
-              const imageFiles = Array.from(event.clipboardData?.files ?? []).filter((file) =>
-                file.type.startsWith('image/'),
-              );
-              if (imageFiles.length > 0) {
+            handlePaste: (view, event) => {
+              if (isInsideCodeBlock(view)) {
                 return false;
               }
 
               const text = event.clipboardData?.getData('text/plain') ?? '';
               const html = event.clipboardData?.getData('text/html') ?? '';
+              const imageFiles = Array.from(event.clipboardData?.files ?? []).filter((file) =>
+                file.type.startsWith('image/'),
+              );
               const hasStructuredHtml = looksLikeStructuredHtml(html);
               const hasExclusiveMarkdown = hasExclusiveMarkdownStructure(text);
+              const htmlTable = extractHtmlTableElement(html);
+              const hasTabularText = looksLikeTabularPlainText(text);
+
+              if (imageFiles.length > 0 && !htmlTable && !hasStructuredHtml && !hasTabularText) {
+                return false;
+              }
+
+              if (htmlTable && !hasExclusiveMarkdown) {
+                event.preventDefault();
+                return insertHtmlTable(view, htmlTable);
+              }
 
               if (hasStructuredHtml && !hasExclusiveMarkdown) {
                 const content =
                   parseContentFromMarkdown(convertHtmlToMarkdown(html)) ??
                   insertPlainTextFallback(text);
+                if (!content) {
+                  return false;
+                }
+
+                event.preventDefault();
+                this.editor.commands.insertContent(content);
+                return true;
+              }
+
+              if (hasTabularText) {
+                const content = parseContentFromMarkdown(tabularTextToMarkdown(text));
                 if (!content) {
                   return false;
                 }

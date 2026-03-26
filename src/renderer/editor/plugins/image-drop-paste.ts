@@ -1,6 +1,21 @@
 import { Extension } from '@tiptap/core';
 import { Plugin } from '@tiptap/pm/state';
 
+function clipboardContainsStructuredTable(event: ClipboardEvent): boolean {
+  const html = event.clipboardData?.getData('text/html') ?? '';
+  if (/<table[\s>]/i.test(html)) {
+    return true;
+  }
+
+  const text = (event.clipboardData?.getData('text/plain') ?? '').replace(/\r\n/g, '\n');
+  const rows = text
+    .split('\n')
+    .map((row) => row.trimEnd())
+    .filter((row) => row.length > 0);
+
+  return rows.length >= 2 && rows.every((row) => row.includes('\t'));
+}
+
 export function createImageDropPasteExtension(onUploadImage: (file: File) => Promise<string>) {
   return Extension.create({
     name: 'imageDropPaste',
@@ -14,7 +29,7 @@ export function createImageDropPasteExtension(onUploadImage: (file: File) => Pro
                 file.type.startsWith('image/'),
               );
 
-              if (files.length === 0) {
+              if (files.length === 0 || clipboardContainsStructuredTable(event)) {
                 return false;
               }
 

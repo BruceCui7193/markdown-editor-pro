@@ -702,10 +702,17 @@ export function parseMarkdown(markdown: string): JSONContent {
   const normalized = normalizeMathDelimiters(markdown);
   const tree = parser.parse(normalized.markdown) as MarkdownNode;
   const context = collectDefinitions(tree);
+  const content = flowChildrenToTiptap(tree.children ?? [], context, normalized.placeholders);
 
   return {
     type: 'doc',
-    content: flowChildrenToTiptap(tree.children ?? [], context, normalized.placeholders),
+    content: content.length
+      ? content
+      : [
+          {
+            type: 'paragraph',
+          },
+        ],
   };
 }
 
